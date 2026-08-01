@@ -47,6 +47,33 @@
 6. Multi-Timeframe Confirmation
 7. Risk Plan / Entry-Stop-Target
 8. OI / Open Interest / Intraday Positioning
+9. Strategy Regime Fit จาก `151 Trading Strategies`
+
+### 2.1 Strategy Regime Fit จาก 151 Trading Strategies
+
+อ้างอิง: `docs/151-trading-strategies-adaptation-th.md`
+
+ก่อนให้ BUY/SELL ให้เลือกก่อนว่าตลาดเข้ากับ strategy family ไหน:
+
+- Trend / momentum: ใช้ trend following, price momentum, moving averages, channel/Donchian, Keltner, Supertrend
+- Range / mean reversion: ใช้ Bollinger, support-resistance, contrarian, liquidity sweep กลับเข้ากรอบ
+- Low-vol squeeze: ใช้ Bollinger Band Width + volume breakout รอเลือกฝั่ง
+- High-vol/event: ใช้ news/sentiment/options/futures backdrop ช่วยกรอง และลดความมั่นใจถ้าทิศทางขัดกัน
+- Options/volatility: ใช้ `stock_options_chain` และ `stock_options_unusual_activity` เป็น proxy positioning เท่านั้น โดยเฉพาะ XAUUSD ให้ดู GLD options V/OI ประกอบ ไม่ใช้ payoff options เป็น spot entry โดยตรง
+
+คะแนนภายในก่อนสรุป:
+
+- MTF alignment 0-25
+- Structure/SMC/liquidity 0-25
+- Strategy fit ตาม regime 0-20
+- Volume/ATR/volatility confirmation 0-15
+- Options/futures/sentiment proxy 0-15
+
+Decision threshold:
+
+- 70+ = BUY/SELL ได้ถ้า RR ผ่าน
+- 55-69 = รอ confirmation
+- <55 = งดเทรด
 
 ---
 

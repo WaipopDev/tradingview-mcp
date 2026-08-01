@@ -78,6 +78,7 @@ from tradingview_mcp.core.services.backtest_service import (
     compare_strategies as _compare_strategies,
     walk_forward_backtest,
 )
+from tradingview_mcp.core.services.strategy_regime_service import score_strategy_regime as _score_strategy_regime
 from tradingview_mcp.core.utils.validators import (
     sanitize_timeframe,
     sanitize_exchange,
@@ -241,6 +242,59 @@ def coin_analysis(symbol: str, exchange: str = "KUCOIN", timeframe: str = "15m")
     exchange = sanitize_exchange(exchange, "KUCOIN")
     timeframe = sanitize_timeframe(timeframe, "15m")
     return analyze_coin(symbol, exchange, timeframe)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Strategy Regime Score", readOnlyHint=True, destructiveHint=False, openWorldHint=True))
+async def strategy_regime_score(
+    symbol: str,
+    exchange: str = "KUCOIN",
+    timeframe: str = "15m",
+    flow_direction: str = "",
+    flow_confidence: str = "",
+    flow_source: str = "",
+) -> dict:
+    """Score BUY/SELL/WAIT using the 151 Trading Strategies regime framework.
+
+    Combines single-timeframe technical analysis + multi-timeframe alignment
+    into a 100-point score based on the local trad playbook:
+    MTF alignment (25), structure/SMC proxy (25), strategy-regime fit (20),
+    volume/ATR/volatility (15), and optional options/futures/sentiment proxy
+    flow (15).
+
+    Args:
+        symbol: Bare ticker, no exchange prefix — crypto: "BTCUSDT", "ETHUSDT"; gold: "XAUUSD"
+        exchange: Exchange — crypto: KUCOIN/BINANCE/MEXC; stocks/CFD/FX as supported by coin_analysis
+        timeframe: Execution timeframe for the detailed technical read (5m, 15m, 1h, 4h, 1D, 1W, 1M)
+        flow_direction: Optional proxy direction: BUY, SELL, or WAIT (e.g. from GLD options V/OI)
+        flow_confidence: Optional proxy confidence: Low, Medium, High
+        flow_source: Optional proxy source description
+    """
+    exchange_clean = sanitize_exchange(exchange, "KUCOIN")
+    timeframe_clean = sanitize_timeframe(timeframe, "15m")
+    full_symbol = normalize_tradingview_symbol(symbol, exchange_clean)
+
+    tech, mtf = await asyncio.gather(
+        asyncio.to_thread(analyze_coin, symbol, exchange_clean, timeframe_clean),
+        asyncio.to_thread(run_multi_timeframe_analysis, full_symbol, exchange_clean),
+    )
+
+    if isinstance(tech, dict) and "error" in tech:
+        return tech
+    if isinstance(mtf, dict) and "error" in mtf:
+        return mtf
+
+    flow_context = None
+    if flow_direction:
+        direction = flow_direction.strip().upper()
+        if direction not in {"BUY", "SELL", "WAIT"}:
+            direction = "WAIT"
+        flow_context = {
+            "direction": direction,
+            "confidence": flow_confidence.strip() or "Medium",
+            "source": flow_source.strip() or "manual proxy input",
+        }
+
+    return _score_strategy_regime(full_symbol, exchange_clean, tech, mtf, flow_context=flow_context)
 
 
 # ── Candle pattern tools ───────────────────────────────────────────────────────
