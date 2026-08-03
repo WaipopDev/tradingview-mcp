@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 from tradingview_mcp.core.jobs.score_latest_signal import store_compact_trade_signal
 from tradingview_mcp.core.services.screener_service import analyze_coin, run_multi_timeframe_analysis
+from tradingview_mcp.core.services.sd_oi_proxy_service import build_sd_oi_proxy
 from tradingview_mcp.core.services.strategy_regime_service import score_strategy_regime
 from tradingview_mcp.core.storage.database import PathLike
 from tradingview_mcp.core.storage.repositories import SignalAiResponseRepository
@@ -103,6 +104,7 @@ def _compact_summary(
     timeframe: str,
     technical: dict[str, Any],
     score: dict[str, Any],
+    sd_oi_proxy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     current_price = _price(technical)
     bias = str(score.get("bias") or "WAIT").upper()
@@ -111,6 +113,8 @@ def _compact_summary(
         f"DECISION_{score.get('decision', 'UNKNOWN')}",
         f"REGIME_{(score.get('regime') or {}).get('primary', 'unknown')}",
     ]
+    if sd_oi_proxy:
+        reason_codes.append("SD_OI_PROXY_ATTACHED")
     return {
         "symbol": symbol.upper(),
         "exchange": exchange.upper(),
@@ -121,6 +125,8 @@ def _compact_summary(
         "score": score.get("total_score"),
         "confidence": (score.get("regime") or {}).get("description"),
         "regime": (score.get("regime") or {}).get("primary"),
+        "sd_range": (sd_oi_proxy or {}).get("sd_range") or {},
+        "oi_proxy": (sd_oi_proxy or {}).get("oi_proxy") or {},
         "volume": _volume_summary(technical),
         "levels": _levels(technical),
         "plan": _derive_plan(current_price, bias, technical),
@@ -169,11 +175,12 @@ def analyze_and_store_signal(
             "timeframe": timeframe_clean,
         }
 
-    score = score_strategy_regime(full_symbol, exchange_clean, technical, mtf)
+    sd_oi_proxy = build_sd_oi_proxy(symbol_clean, technical, timeframe_clean)
+    score = score_strategy_regime(full_symbol, exchange_clean, technical, mtf, flow_context=sd_oi_proxy.get("flow_context"))
     if "error" in score:
         return {"stored": False, **score}
 
-    summary = _compact_summary(symbol_clean, exchange_clean, timeframe_clean, technical, score)
+    summary = _compact_summary(symbol_clean, exchange_clean, timeframe_clean, technical, score, sd_oi_proxy=sd_oi_proxy)
     summary["ai_gate"] = SignalAiResponseRepository(db_path).build_ai_gate(summary)
     stored = store_compact_trade_signal(summary, db_path=db_path)
     latest = stored["latest"] or summary

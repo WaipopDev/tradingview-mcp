@@ -12,11 +12,18 @@ function biasClass(bias?: string) {
   return "border-amber-400/40 bg-amber-500/10 text-amber-100";
 }
 
+function decisionThai(decision?: string) {
+  if (decision === "TRADE") return "เข้าเงื่อนไขเทรด";
+  if (decision === "WAIT_CONFIRMATION") return "รอยืนยัน";
+  if (decision === "NO_TRADE") return "งดเทรด";
+  return decision ?? "รอยืนยัน";
+}
+
 export function SignalCard({ signal }: { signal: LatestSignal }) {
   if (signal.error) {
     return (
       <section className="rounded-3xl border border-amber-400/30 bg-amber-500/10 p-6 text-amber-100">
-        <p className="text-sm uppercase tracking-[0.3em] text-amber-200/70">No cached signal</p>
+        <p className="text-sm uppercase tracking-[0.3em] text-amber-200/70">ยังไม่มีสัญญาณใน cache</p>
         <h2 className="mt-3 text-2xl font-semibold">{signal.error.code}</h2>
         <p className="mt-2 text-sm text-amber-100/80">{signal.error.message ?? "รอ collector/score job เขียนข้อมูลลง DB ก่อน"}</p>
       </section>
@@ -37,17 +44,17 @@ export function SignalCard({ signal }: { signal: LatestSignal }) {
           <div>
             <p className="text-sm uppercase tracking-[0.3em] opacity-70">{signal.exchange ?? "OANDA"}:{signal.symbol ?? "XAUUSD"}</p>
             <h2 className="mt-3 text-5xl font-bold">{signal.bias ?? "WAIT"}</h2>
-            <p className="mt-2 text-lg opacity-80">{signal.decision ?? "WAIT_CONFIRMATION"}</p>
+            <p className="mt-2 text-lg opacity-80">{decisionThai(signal.decision)}</p>
           </div>
           <div className="rounded-2xl bg-black/25 p-4 text-right">
-            <p className="text-sm opacity-70">Price</p>
+            <p className="text-sm opacity-70">ราคา</p>
             <p className="text-3xl font-semibold">{valueOrDash(signal.price)}</p>
-            <p className="mt-2 text-sm opacity-70">Score {valueOrDash(signal.score)} / 100</p>
+            <p className="mt-2 text-sm opacity-70">คะแนน {valueOrDash(signal.score)} / 100</p>
           </div>
         </div>
 
         <div className="mt-8 grid gap-3 sm:grid-cols-4">
-          <Metric label="Entry" value={signal.plan?.entry_zone ?? "-"} />
+          <Metric label="จุดเข้า" value={signal.plan?.entry_zone ?? "-"} />
           <Metric label="SL" value={valueOrDash(signal.plan?.sl)} />
           <Metric label="TP" value={signal.plan?.tp?.join(" / ") ?? "-"} />
           <Metric label="TF" value={signal.timeframe ?? "-"} />
@@ -55,13 +62,13 @@ export function SignalCard({ signal }: { signal: LatestSignal }) {
       </div>
 
       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
-        <h3 className="text-xl font-semibold">Context</h3>
+        <h3 className="text-xl font-semibold">บริบทตลาด</h3>
         <div className="mt-5 space-y-3 text-sm text-slate-300">
           <Row label="Regime" value={valueOrDash(signal.regime)} />
-          <Row label="Confidence" value={valueOrDash(signal.confidence)} />
-          <Row label="Data age" value={`${signal.data_age_seconds ?? 0}s`} />
-          <Row label="Support" value={support} />
-          <Row label="Resistance" value={resistance} />
+          <Row label="ความมั่นใจ" value={valueOrDash(signal.confidence)} />
+          <Row label="อายุข้อมูล" value={`${signal.data_age_seconds ?? 0} วินาที`} />
+          <Row label="แนวรับ" value={support} />
+          <Row label="แนวต้าน" value={resistance} />
         </div>
       </div>
     </section>

@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Trad Dashboard",
-  description: "Token-efficient XAUUSD signal dashboard for tradingview-mcp",
+  title: "แดชบอร์ดเทรด",
+  description: "แดชบอร์ดสัญญาณ XAUUSD แบบประหยัด token สำหรับ tradingview-mcp",
 };
 
 export default function RootLayout({

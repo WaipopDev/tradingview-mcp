@@ -53,6 +53,11 @@ def test_analyze_and_store_signal_scores_and_persists_compact_signal(tmp_path):
     assert result["plan"]["entry_zone"]
     assert result["plan"]["sl"] > 4078.2
     assert result["plan"]["tp"][0] < 4078.2
+    assert result["sd_range"]["sd1_low"] == 4070.2
+    assert result["sd_range"]["sd1_high"] == 4086.2
+    assert result["oi_proxy"]["magnet_zone"] == 4075
+    assert result["oi_proxy"]["real_open_interest_available"] is False
+    assert "SD_OI_PROXY_ATTACHED" in result["reason_codes"]
     assert "STORED_FROM_AUTOMATION_CONNECTOR" in result["reason_codes"]
 
     latest = TradeSignalRepository(db_path).get_latest_trade_signal("XAUUSD", timeframe="15m")

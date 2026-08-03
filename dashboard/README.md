@@ -29,7 +29,7 @@ analyze_and_store_signal(symbol="XAUUSD", exchange="OANDA", timeframe="15m")
 Flow:
 
 ```text
-Telegram prompt -> analyze_and_store_signal -> TradingView analysis -> strategy score -> SQLite -> dashboard
+Telegram prompt -> analyze_and_store_signal -> TradingView analysis -> SD/OI proxy -> strategy score -> SQLite -> dashboard
 ```
 
 ทุก 5 นาทีมี local cron job `trad-xauusd-collector-5m` เรียก script นี้เพื่ออัปเดต DB โดยไม่ใช้ LLM:
@@ -49,6 +49,13 @@ collect_trad_signal.py --json
   -> store AI response ลง ai_signal_responses
   -> hermes send ไป Telegram
 ```
+
+SD/OI proxy logic:
+
+- `sd_range` คำนวณจาก current price + ATR เป็น expected move, SD1/SD2 high/low และ range_state
+- `oi_proxy` ใช้ support/resistance ที่ใกล้ราคาเป็น intraday magnet proxy
+- ระบุชัดว่า `real_open_interest_available=false` เพราะ OANDA:XAUUSD เป็น spot/CFD ไม่มี centralized OI
+- `flow_context` จาก proxy ถูกส่งเข้า `strategy_regime_score` เพื่อให้คะแนน options/futures/proxy flow ไม่เป็นค่าว่าง
 
 AI gate logic:
 

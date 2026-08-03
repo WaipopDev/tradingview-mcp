@@ -24,11 +24,13 @@ def test_should_ask_ai_for_signal_only_when_gate_true_without_cache():
     assert should_ask_ai_for_signal({**_trade_signal(), "ai_gate": {"should_ask_ai": True, "cached_response": "old"}}) is False
 
 
-def test_build_ai_prompt_contains_compact_trade_context_and_no_raw_fetch_instruction():
+def test_build_ai_prompt_is_english_but_requests_concise_thai_answer():
     prompt = build_ai_prompt(_trade_signal())
 
     assert "OANDA:XAUUSD" in prompt
     assert "SELL" in prompt
     assert "4088-4093" in prompt
-    assert "ห้ามดึงข้อมูลเพิ่ม" in prompt
+    assert "Do not fetch additional data" in prompt
+    assert "Respond in concise Thai" in prompt
+    assert "ห้ามดึงข้อมูลเพิ่ม" not in prompt
     assert "fp123" in prompt

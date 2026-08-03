@@ -21,13 +21,13 @@ def build_ai_prompt(signal: Mapping[str, Any]) -> str:
     gate = signal.get("ai_gate") or {}
     fingerprint = gate.get("signal_fingerprint") if isinstance(gate, Mapping) else None
     compact_json = json.dumps(signal, ensure_ascii=False, sort_keys=True, default=str)
-    return f"""คุณคือผู้ช่วยเทรด XAUUSD สำหรับ Telegram ของ Waipop
+    return f"""You are Waipop's XAUUSD trading assistant for Telegram.
 
-ใช้เฉพาะ compact signal JSON ด้านล่างเท่านั้น ห้ามดึงข้อมูลเพิ่ม ห้ามเดา raw data เพิ่ม
-ตอบเป็นภาษาไทยสั้น กระชับ ใช้ BUY/SELL เท่านั้น ไม่ใช้ Long/Short
-ต้องมี: Instrument, Current price, Bias, Entry, SL, TP1/TP2/TP3, Decision, Reason
-ถ้า plan มี entry_zone ให้แจ้งเป็นจุดเข้า actionable ทันที
-ท้ายข้อความใส่ fingerprint: {fingerprint}
+Use only the compact signal JSON below. Do not fetch additional data. Do not infer raw market data that is not present in the JSON.
+Respond in concise Thai, but keep trading actions as BUY/SELL only; do not use Long/Short.
+Your answer must include: Instrument, Current price, Bias, Entry, SL, TP1/TP2/TP3, Decision, and Reason.
+If the plan has an entry_zone, present it as an actionable entry alert immediately.
+Append this fingerprint at the end: {fingerprint}
 
 Instrument: {exchange}:{symbol}
 Timeframe: {timeframe}
