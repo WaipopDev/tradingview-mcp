@@ -80,6 +80,8 @@ from tradingview_mcp.core.services.backtest_service import (
 )
 from tradingview_mcp.core.services.strategy_regime_service import score_strategy_regime as _score_strategy_regime
 from tradingview_mcp.core.services.oi_expected_range_service import score_oi_expected_range as _score_oi_expected_range
+from tradingview_mcp.core.jobs.analyze_and_store_signal import analyze_and_store_signal as _analyze_and_store_signal
+from tradingview_mcp.core.storage.repositories import SignalAiResponseRepository, TradeSignalRepository
 from tradingview_mcp.core.utils.validators import (
     sanitize_timeframe,
     sanitize_exchange,
@@ -348,6 +350,89 @@ def oi_expected_range_score(
         volume_state=volume_state,
         expiry_context=expiry_context,
     )
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Latest Compact Trade Signal", readOnlyHint=True, destructiveHint=False, openWorldHint=False))
+def latest_trade_signal(symbol: str = "XAUUSD", timeframe: str = "") -> dict:
+    """Return the latest compact AI-ready trade signal from the local SQLite cache.
+
+    This tool intentionally does not fetch raw TradingView/options data. It reads
+    the deterministic collector/signal-engine output so the LLM only sees a small
+    summary payload for token-efficient BUY/SELL planning.
+
+    Args:
+        symbol: Instrument label, e.g. XAUUSD.
+        timeframe: Optional execution timeframe filter, e.g. 5m or 15m. Empty means latest active signal for the symbol.
+    """
+    timeframe_clean = timeframe.strip() or None
+    signal = TradeSignalRepository().get_latest_trade_signal(symbol.strip().upper(), timeframe=timeframe_clean)
+    if signal is None:
+        return {
+            "error": {
+                "code": "NO_SIGNAL_FOUND",
+                "message": "No active cached trade signal found for symbol/timeframe.",
+                "retryable": False,
+            },
+            "symbol": symbol.strip().upper(),
+            "timeframe": timeframe_clean,
+        }
+    return signal
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Analyze and Store Trade Signal", readOnlyHint=True, destructiveHint=False, openWorldHint=True))
+def analyze_and_store_signal(symbol: str = "XAUUSD", exchange: str = "OANDA", timeframe: str = "15m") -> dict:
+    """Analyze a symbol, persist the compact signal to SQLite, and return it.
+
+    This is the automation connector for Telegram/Hermes workflows. A user can
+    ask for a fresh analysis and dashboard update in one step; the tool fetches
+    technical + multi-timeframe data, computes the deterministic regime score,
+    stores the compact signal, and returns the same AI-ready payload shown by
+    `latest_trade_signal`.
+
+    Args:
+        symbol: Bare ticker, e.g. XAUUSD.
+        exchange: TradingView exchange, default OANDA for gold.
+        timeframe: Execution timeframe, e.g. 5m or 15m.
+    """
+    exchange_clean = sanitize_exchange(exchange, "OANDA")
+    timeframe_clean = sanitize_timeframe(timeframe, "15m")
+    return _analyze_and_store_signal(symbol=symbol, exchange=exchange_clean, timeframe=timeframe_clean)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Store AI Signal Response", readOnlyHint=True, destructiveHint=False, openWorldHint=False))
+def store_ai_signal_response(
+    symbol: str,
+    timeframe: str,
+    signal_fingerprint: str,
+    ai_response: str,
+    source: str = "telegram",
+) -> dict:
+    """Cache the AI's final natural-language response for a signal fingerprint.
+
+    When the deterministic signal has the same fingerprint later, the connector
+    can reuse this response and avoid asking the LLM again.
+    """
+    symbol_clean = symbol.strip().upper() or "XAUUSD"
+    timeframe_clean = sanitize_timeframe(timeframe, "15m")
+    fp = signal_fingerprint.strip()
+    if not fp:
+        return {"stored": False, "error": {"code": "MISSING_SIGNAL_FINGERPRINT", "retryable": False}}
+    if not ai_response.strip():
+        return {"stored": False, "error": {"code": "MISSING_AI_RESPONSE", "retryable": False}}
+    row_id = SignalAiResponseRepository().insert_ai_response(
+        symbol=symbol_clean,
+        timeframe=timeframe_clean,
+        signal_fingerprint=fp,
+        ai_response=ai_response.strip(),
+        source=source.strip() or "telegram",
+    )
+    return {
+        "stored": True,
+        "id": row_id,
+        "symbol": symbol_clean,
+        "timeframe": timeframe_clean,
+        "signal_fingerprint": fp,
+    }
 
 
 # ── Candle pattern tools ───────────────────────────────────────────────────────
