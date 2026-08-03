@@ -364,7 +364,7 @@ Unlike basic screeners, this framework deploys **specialized AI agents** that de
 
 ---
 
-## 🔧 All 38 MCP Tools
+## 🔧 All 39 MCP Tools
 
 ### 📊 Backtesting Engine
 
@@ -427,6 +427,7 @@ Example prompt: "Compare all 9 strategies on MSFT for 2 years"
 | `financial_news` | Live RSS headlines from Yahoo Finance, MarketWatch, CNBC, CoinDesk, CoinTelegraph |
 | `combined_analysis` | **Power Tool**: TradingView technicals + Reddit sentiment + live news → confluence decision. Now backed by retry + 60s cache for resilience against transient screener errors. |
 | `strategy_regime_score` | 151 Trading Strategies regime engine: combines single-timeframe TA + multi-timeframe alignment + optional proxy flow into BUY/SELL/WAIT, 100-point score, and matching strategy family. |
+| `oi_expected_range_score` | Manual OI/IV expected-range + magnet-zone scorer: basis-adjusts a futures/options proxy, derives 1 SD / 2 SD ranges, and returns flow context for strategy-regime scoring. |
 
 ---
 

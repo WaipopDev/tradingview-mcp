@@ -79,6 +79,7 @@ from tradingview_mcp.core.services.backtest_service import (
     walk_forward_backtest,
 )
 from tradingview_mcp.core.services.strategy_regime_service import score_strategy_regime as _score_strategy_regime
+from tradingview_mcp.core.services.oi_expected_range_service import score_oi_expected_range as _score_oi_expected_range
 from tradingview_mcp.core.utils.validators import (
     sanitize_timeframe,
     sanitize_exchange,
@@ -295,6 +296,58 @@ async def strategy_regime_score(
         }
 
     return _score_strategy_regime(full_symbol, exchange_clean, tech, mtf, flow_context=flow_context)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="OI Expected Range Score", readOnlyHint=True, destructiveHint=False, openWorldHint=True))
+def oi_expected_range_score(
+    symbol: str,
+    current_price: float,
+    anchor_price: float,
+    expected_move: float | None = None,
+    iv_daily_pct: float | None = None,
+    oi_magnet_zone: float | None = None,
+    basis: float | None = None,
+    proxy_underlying_price: float | None = None,
+    price_action_state: str = "",
+    volatility_state: str = "",
+    volume_state: str = "",
+    expiry_context: bool = False,
+) -> dict:
+    """OI expected-range / magnet proxy score for intraday trading.
+
+    Use this when the user has options/OI inputs like a futures/options basis,
+    OI magnet strike/zone, anchor price, and 1 SD expected move. The tool does
+    not fetch centralized OI; it scores provided OI/IV context and returns a
+    `flow_context` that can be passed into `strategy_regime_score` logic.
+
+    Args:
+        symbol: Instrument label, e.g. XAUUSD.
+        current_price: Current spot/CFD/traded price.
+        anchor_price: Session/open anchor price used to build SD ranges.
+        expected_move: 1 SD expected move in price points. If omitted, pass iv_daily_pct.
+        iv_daily_pct: Daily IV/expected-move percent, e.g. 0.8 means 0.8% of anchor.
+        oi_magnet_zone: OI concentration / magnet strike or zone.
+        basis: Difference used to convert proxy underlying to traded price.
+        proxy_underlying_price: Futures/options underlying price before basis adjustment.
+        price_action_state: inside_range, rejected_lower_sd1, rejected_upper_sd1, breakout_up, breakout_down.
+        volatility_state: low, compressed, expanding, high.
+        volume_state: normal, above average, high, very high.
+        expiry_context: True when near options expiry/settlement.
+    """
+    return _score_oi_expected_range(
+        symbol=symbol,
+        current_price=current_price,
+        anchor_price=anchor_price,
+        expected_move=expected_move,
+        iv_daily_pct=iv_daily_pct,
+        oi_magnet_zone=oi_magnet_zone,
+        basis=basis,
+        proxy_underlying_price=proxy_underlying_price,
+        price_action_state=price_action_state,
+        volatility_state=volatility_state,
+        volume_state=volume_state,
+        expiry_context=expiry_context,
+    )
 
 
 # ── Candle pattern tools ───────────────────────────────────────────────────────
