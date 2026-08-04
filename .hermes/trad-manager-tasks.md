@@ -13,6 +13,7 @@ Last autonomous review: 2026-08-05 01:19 ICT
 6. After each completed change: verify with scripts/tests, review result, then commit/push repo changes when applicable.
 7. Runtime-only Hermes scripts/config under ~/.hermes/scripts are local and not committed unless mirrored into the repo intentionally.
 8. Routine no-risk/no-open-order WAIT status should stay silent; report only material changes, risks, or approval requests.
+9. Language policy: MGT talks to Waipop in concise Thai; internal prompts/briefs to departments or specialists are English.
 
 ## Department task intake
 
