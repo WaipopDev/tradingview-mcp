@@ -33,7 +33,7 @@ def test_analyze_and_store_signal_tool_is_registered_with_annotations():
 
     tool = tools["analyze_and_store_signal"]
     assert tool.annotations.title == "Analyze and Store Trade Signal"
-    assert tool.annotations.readOnlyHint is True
+    assert tool.annotations.readOnlyHint is False
     assert tool.annotations.destructiveHint is False
 
 
@@ -42,5 +42,5 @@ def test_store_ai_signal_response_tool_is_registered_with_annotations():
 
     tool = tools["store_ai_signal_response"]
     assert tool.annotations.title == "Store AI Signal Response"
-    assert tool.annotations.readOnlyHint is True
+    assert tool.annotations.readOnlyHint is False
     assert tool.annotations.destructiveHint is False

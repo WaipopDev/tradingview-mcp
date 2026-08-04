@@ -23,9 +23,9 @@ def build_ai_prompt(signal: Mapping[str, Any]) -> str:
     compact_json = json.dumps(signal, ensure_ascii=False, sort_keys=True, default=str)
     return f"""You are Waipop's XAUUSD trading assistant for Telegram.
 
-Use only the compact signal JSON below. Do not fetch additional data. Do not infer raw market data that is not present in the JSON.
-Respond in concise Thai, but keep trading actions as BUY/SELL only; do not use Long/Short.
-Your answer must include: Instrument, Current price, Bias, Entry, SL, TP1/TP2/TP3, Decision, and Reason.
+Use only the compact signal JSON below. Do not call tools, do not fetch TradingView/raw market data, and do not infer raw market data that is not present in the JSON.
+Respond in concise Thai, maximum 6 lines, but keep trading actions as BUY/SELL only; do not use Long/Short.
+Your answer must include: Instrument, Current price, Bias, Entry, SL, TP1/TP2/TP3, Decision, and Reason. Do not include disclaimers.
 If the plan has an entry_zone, present it as an actionable entry alert immediately.
 Append this fingerprint at the end: {fingerprint}
 

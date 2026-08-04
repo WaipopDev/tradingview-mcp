@@ -72,3 +72,33 @@ def test_score_strategy_regime_marks_conflicting_flow_as_wait_confirmation():
     assert result["decision"] == "WAIT_CONFIRMATION"
     assert result["score_breakdown"]["options_futures_sentiment_proxy"] <= 3
     assert any("conflicts" in note.lower() for note in result["notes"])
+
+
+def test_score_strategy_regime_accepts_oi_proxy_limitation_without_changing_contract():
+    technical = {
+        "price_data": {"current_price": 2500, "change_percent": 1.0},
+        "market_structure": {"trend": "Bullish", "trend_strength": "Strong", "momentum_aligned": True},
+        "market_sentiment": {"volatility": "Medium", "buy_sell_signal": "BUY"},
+        "rsi": {"value": 57, "signal": "Bullish"},
+        "macd": {"crossover": "Bullish"},
+        "bollinger_bands": {"width": 0.03, "squeeze": False, "position": "Upper Half"},
+        "volume_analysis": {"signal": "High", "ratio": 2.0},
+        "atr": {"volatility": "Medium", "percent_of_price": 1.0},
+    }
+    mtf = {"alignment": {"status": "MOSTLY BULLISH", "net_score": 3, "confidence": "High"}, "timeframes": {}}
+    flow = {
+        "direction": "BUY",
+        "confidence": "High",
+        "source": "OANDA:XAUUSD intraday ATR + support/resistance OI proxy",
+        "real_open_interest_available": False,
+        "limitation": "OANDA:XAUUSD spot/CFD has no centralised open interest; proxy only.",
+    }
+
+    result = score_strategy_regime("XAUUSD", "OANDA", technical, mtf, flow_context=flow)
+
+    assert {"bias", "decision", "total_score", "score_breakdown", "regime", "strategy_family", "thresholds", "notes"}.issubset(result)
+    assert result["bias"] == "BUY"
+    assert result["decision"] == "TRADE"
+    assert result["score_breakdown"]["options_futures_sentiment_proxy"] == 15
+    assert any("proxy only" in note.lower() for note in result["notes"])
+    assert any("real_open_interest_available=false" in note for note in result["notes"])

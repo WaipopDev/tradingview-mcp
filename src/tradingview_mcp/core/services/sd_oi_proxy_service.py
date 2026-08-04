@@ -11,6 +11,12 @@ from typing import Any
 
 from tradingview_mcp.core.services.oi_expected_range_service import score_oi_expected_range
 
+OANDA_XAUUSD_OI_LIMITATION = (
+    "OANDA:XAUUSD spot/CFD has no centralised open interest; this is an "
+    "intraday ATR + support/resistance proxy, not real exchange OI."
+)
+OANDA_XAUUSD_PROXY_SOURCE = "OANDA:XAUUSD intraday ATR + support/resistance OI proxy"
+
 
 def _num(value: Any, default: float | None = None) -> float | None:
     try:
@@ -72,6 +78,26 @@ def _price_action_state(price: float, anchor: float, expected_move: float) -> st
     return "inside_sd1"
 
 
+def _safe_proxy_flow(flow: dict[str, Any] | None) -> dict[str, Any]:
+    """Return flow_context safe to feed into Strategy Regime Scoring.
+
+    Strategy scoring only consumes direction/confidence/source today, but the
+    explicit false OI flag and limitation travel with the proxy context so logs
+    and score notes cannot imply OANDA:XAUUSD has real centralised OI.
+    """
+    flow = flow or {}
+    direction = str(flow.get("direction") or "WAIT").upper()
+    if direction not in {"BUY", "SELL", "WAIT"}:
+        direction = "WAIT"
+    return {
+        "direction": direction,
+        "confidence": flow.get("confidence") or "Medium",
+        "source": OANDA_XAUUSD_PROXY_SOURCE,
+        "real_open_interest_available": False,
+        "limitation": OANDA_XAUUSD_OI_LIMITATION,
+    }
+
+
 def build_sd_oi_proxy(symbol: str, technical: dict[str, Any], timeframe: str = "15m") -> dict[str, Any]:
     """Build compact SD range and OI/intraday proxy payload from technical data."""
     price = _price(technical)
@@ -80,9 +106,10 @@ def build_sd_oi_proxy(symbol: str, technical: dict[str, Any], timeframe: str = "
             "sd_range": {},
             "oi_proxy": {
                 "real_open_interest_available": False,
-                "limitation": "OANDA:XAUUSD spot/CFD has no centralised open interest; proxy unavailable without price.",
+                "source": OANDA_XAUUSD_PROXY_SOURCE,
+                "limitation": OANDA_XAUUSD_OI_LIMITATION + " Proxy unavailable without price.",
             },
-            "flow_context": {"direction": "WAIT", "confidence": "Low", "source": "missing price"},
+            "flow_context": _safe_proxy_flow({"direction": "WAIT", "confidence": "Low"}),
         }
 
     expected_move, move_source = _atr_expected_move(technical, price)
@@ -103,7 +130,7 @@ def build_sd_oi_proxy(symbol: str, technical: dict[str, Any], timeframe: str = "
         volume_state=str(volume.get("signal") or ""),
     )
     range_levels = scored.get("range_levels") or {}
-    flow = scored.get("flow_context") or {"direction": "WAIT", "confidence": "Medium", "source": "OI expected range / magnet proxy"}
+    flow = _safe_proxy_flow(scored.get("flow_context"))
 
     return {
         "sd_range": {
@@ -119,8 +146,8 @@ def build_sd_oi_proxy(symbol: str, technical: dict[str, Any], timeframe: str = "
         },
         "oi_proxy": {
             "real_open_interest_available": False,
-            "source": "XAUUSD intraday ATR + support/resistance proxy",
-            "limitation": "OANDA:XAUUSD spot/CFD has no centralised open interest; this is an intraday proxy, not real exchange OI.",
+            "source": OANDA_XAUUSD_PROXY_SOURCE,
+            "limitation": OANDA_XAUUSD_OI_LIMITATION,
             "magnet_zone": _round(magnet),
             "support_levels": [_round(x) for x in levels.get("support", [])],
             "resistance_levels": [_round(x) for x in levels.get("resistance", [])],

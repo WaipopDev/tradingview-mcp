@@ -7,6 +7,7 @@ from tradingview_mcp.core.storage.repositories import SignalAiResponseRepository
 
 def _trade_tech() -> dict:
     return {
+        "symbol": "OANDA:XAUUSD",
         "price_data": {"current_price": 4078.2, "change_percent": -0.3},
         "market_structure": {"trend": "Bearish", "trend_strength": "Strong", "momentum_aligned": True},
         "market_sentiment": {"volatility": "Medium", "buy_sell_signal": "SELL"},
@@ -20,7 +21,10 @@ def _trade_tech() -> dict:
 
 
 def _trade_mtf() -> dict:
-    return {"alignment": {"status": "MOSTLY BEARISH", "net_score": -3, "confidence": "High"}, "timeframes": {}}
+    return {
+        "alignment": {"status": "MOSTLY BEARISH", "net_score": -3, "confidence": "High"},
+        "timeframes": {"15m": {}, "1h": {}, "4h": {}, "1D": {}},
+    }
 
 
 def test_analyze_and_store_signal_returns_ai_gate_for_trade_condition(tmp_path):

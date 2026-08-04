@@ -51,6 +51,7 @@ def store_compact_trade_signal(summary: Mapping[str, Any], db_path: PathLike | N
     record = {
         "symbol": str(summary.get("symbol") or "XAUUSD").upper(),
         "exchange": summary.get("exchange") or "OANDA",
+        "instrument": summary.get("instrument") or f"{summary.get('exchange') or 'OANDA'}:{summary.get('symbol') or 'XAUUSD'}",
         "timeframe": summary.get("timeframe") or "15m",
         "price": summary.get("price"),
         "bias": str(summary.get("bias") or "WAIT").upper(),
@@ -67,7 +68,9 @@ def store_compact_trade_signal(summary: Mapping[str, Any], db_path: PathLike | N
         "sd_range_json": _json_dump(summary.get("sd_range")),
         "oi_proxy_json": _json_dump(summary.get("oi_proxy")),
         "volume_json": _json_dump(summary.get("volume")),
+        "technical_json": _json_dump(summary.get("technical")),
         "levels_json": _json_dump(summary.get("levels")),
+        "score_breakdown_json": _json_dump(summary.get("score_breakdown")),
         "reason_codes_json": _json_dump(summary.get("reason_codes")),
         "ai_gate_json": _json_dump(summary.get("ai_gate")),
         "created_at": summary.get("created_at"),

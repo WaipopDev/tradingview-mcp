@@ -25,12 +25,27 @@ def test_build_sd_oi_proxy_derives_expected_range_from_atr_and_nearest_magnet():
     assert result["sd_range"]["sd2_low"] == 4062.2
     assert result["sd_range"]["sd2_high"] == 4094.2
     assert result["oi_proxy"]["magnet_zone"] == 4075
-    assert result["oi_proxy"]["source"] == "XAUUSD intraday ATR + support/resistance proxy"
+    assert result["oi_proxy"]["source"] == "OANDA:XAUUSD intraday ATR + support/resistance OI proxy"
     assert result["flow_context"]["direction"] in {"BUY", "SELL", "WAIT"}
+    assert result["flow_context"]["source"] == "OANDA:XAUUSD intraday ATR + support/resistance OI proxy"
+    assert result["flow_context"]["real_open_interest_available"] is False
+    assert "not real exchange OI" in result["flow_context"]["limitation"]
 
 
 def test_build_sd_oi_proxy_marks_spot_oi_as_proxy_not_real_open_interest():
     result = build_sd_oi_proxy("XAUUSD", _technical(), "15m")
 
     assert result["oi_proxy"]["real_open_interest_available"] is False
+    assert "OANDA:XAUUSD" in result["oi_proxy"]["limitation"]
+    assert "no centralised open interest" in result["oi_proxy"]["limitation"]
     assert "proxy" in result["oi_proxy"]["limitation"].lower()
+
+
+def test_build_sd_oi_proxy_missing_price_keeps_safe_proxy_limitation():
+    result = build_sd_oi_proxy("XAUUSD", {"price_data": {}}, "15m")
+
+    assert result["sd_range"] == {}
+    assert result["oi_proxy"]["real_open_interest_available"] is False
+    assert result["flow_context"]["direction"] == "WAIT"
+    assert result["flow_context"]["real_open_interest_available"] is False
+    assert "not real exchange OI" in result["flow_context"]["limitation"]

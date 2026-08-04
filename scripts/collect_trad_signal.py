@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -19,21 +20,34 @@ if str(SRC) not in sys.path:
 from tradingview_mcp.core.jobs.analyze_and_store_signal import analyze_and_store_signal  # noqa: E402
 
 
-def main() -> int:
+def _retryable_error(result: dict) -> bool:
+    raw_error = result.get("error")
+    if isinstance(raw_error, dict):
+        return bool(raw_error.get("retryable"))
+    return False
+
+
+def main(argv: list[str] | None = None, analyze_fn=analyze_and_store_signal) -> int:
     parser = argparse.ArgumentParser(description="Collect latest trad signal into SQLite")
     parser.add_argument("--symbol", default="XAUUSD")
     parser.add_argument("--exchange", default="OANDA")
     parser.add_argument("--timeframe", default="15m")
+    parser.add_argument(
+        "--db-path",
+        default=os.getenv("TRADINGVIEW_MCP_DB_PATH") or os.getenv("TRAD_SIGNAL_DB_PATH"),
+        help="SQLite DB path (also supports TRADINGVIEW_MCP_DB_PATH or TRAD_SIGNAL_DB_PATH)",
+    )
     parser.add_argument("--json", action="store_true", help="Print compact result JSON")
     parser.add_argument("--print-ai-required", action="store_true", help="Print only when ai_gate.should_ask_ai is true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    result = analyze_and_store_signal(symbol=args.symbol, exchange=args.exchange, timeframe=args.timeframe)
+    result = analyze_fn(symbol=args.symbol, exchange=args.exchange, timeframe=args.timeframe, db_path=args.db_path)
     if result.get("error"):
-        print(json.dumps(result, ensure_ascii=False), file=sys.stderr)
-        raw_error = result.get("error")
-        error = raw_error if isinstance(raw_error, dict) else {}
-        return 0 if error.get("retryable") else 1
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False))
+        elif not _retryable_error(result):
+            print(json.dumps(result, ensure_ascii=False), file=sys.stderr)
+        return 0 if _retryable_error(result) else 1
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False))

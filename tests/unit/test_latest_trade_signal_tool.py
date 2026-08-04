@@ -16,6 +16,7 @@ def test_latest_trade_signal_reads_compact_payload_from_configured_db(tmp_path, 
         {
             "symbol": "XAUUSD",
             "exchange": "OANDA",
+            "instrument": "OANDA:XAUUSD",
             "timeframe": "15m",
             "price": 4078.2,
             "bias": "SELL",
@@ -26,6 +27,8 @@ def test_latest_trade_signal_reads_compact_payload_from_configured_db(tmp_path, 
             "sl": 4102,
             "tp1": 4075,
             "tp2": 4062,
+            "technical_json": {"source_symbol": "OANDA:XAUUSD"},
+            "score_breakdown_json": {"mtf_alignment": 25},
             "reason_codes_json": json.dumps(["MTF_SELL_ALIGNMENT"]),
             "created_at": "2026-08-03T10:00:00+00:00",
         }
@@ -34,10 +37,13 @@ def test_latest_trade_signal_reads_compact_payload_from_configured_db(tmp_path, 
     result = latest_trade_signal("XAUUSD", timeframe="15m")
 
     assert result["symbol"] == "XAUUSD"
+    assert result["instrument"] == "OANDA:XAUUSD"
     assert result["bias"] == "SELL"
     assert result["decision"] == "TRADE"
     assert result["score"] == 74
     assert result["plan"]["entry_zone"] == "4088-4093"
+    assert result["technical"]["source_symbol"] == "OANDA:XAUUSD"
+    assert result["score_breakdown"] == {"mtf_alignment": 25}
     assert result["reason_codes"] == ["MTF_SELL_ALIGNMENT"]
 
 

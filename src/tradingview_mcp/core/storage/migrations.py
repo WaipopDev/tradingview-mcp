@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS trade_signals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   symbol TEXT NOT NULL,
   exchange TEXT DEFAULT 'OANDA',
+  instrument TEXT,
   timeframe TEXT DEFAULT '15m',
   price REAL,
   bias TEXT NOT NULL,
@@ -92,7 +93,9 @@ CREATE TABLE IF NOT EXISTS trade_signals (
   sd_range_json TEXT,
   oi_proxy_json TEXT,
   volume_json TEXT,
+  technical_json TEXT,
   levels_json TEXT,
+  score_breakdown_json TEXT,
   reason_codes_json TEXT,
   ai_gate_json TEXT,
   source_score_id INTEGER,
@@ -119,10 +122,26 @@ CREATE TABLE IF NOT EXISTS ai_signal_responses (
 
 CREATE INDEX IF NOT EXISTS idx_ai_signal_responses_lookup
 ON ai_signal_responses(symbol, timeframe, signal_fingerprint);
+
+CREATE TABLE IF NOT EXISTS ai_signal_alert_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  timeframe TEXT NOT NULL,
+  signal_fingerprint TEXT NOT NULL,
+  target TEXT NOT NULL,
+  delivered_at TEXT NOT NULL,
+  UNIQUE(symbol, timeframe, signal_fingerprint, target)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_signal_alert_deliveries_lookup
+ON ai_signal_alert_deliveries(symbol, timeframe, signal_fingerprint, target);
 """
 
 POST_SCHEMA_COLUMNS = {
     "trade_signals": {
+        "instrument": "TEXT",
+        "technical_json": "TEXT",
+        "score_breakdown_json": "TEXT",
         "ai_gate_json": "TEXT",
     },
 }

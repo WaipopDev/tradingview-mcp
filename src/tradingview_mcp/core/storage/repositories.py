@@ -14,7 +14,9 @@ _JSON_FIELDS = {
     "sd_range_json": "sd_range",
     "oi_proxy_json": "oi_proxy",
     "volume_json": "volume",
+    "technical_json": "technical",
     "levels_json": "levels",
+    "score_breakdown_json": "score_breakdown",
     "reason_codes_json": "reason_codes",
     "ai_gate_json": "ai_gate",
 }
@@ -70,6 +72,7 @@ def _compact_trade_signal(row: Mapping[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {
         "symbol": row.get("symbol"),
         "exchange": row.get("exchange") or "OANDA",
+        "instrument": row.get("instrument") or f"{row.get('exchange') or 'OANDA'}:{row.get('symbol')}",
         "timeframe": row.get("timeframe") or "15m",
         "price": row.get("price"),
         "data_age_seconds": age,
@@ -103,14 +106,15 @@ class TradeSignalRepository:
 
     def insert_trade_signal(self, signal: Mapping[str, Any]) -> int:
         fields = [
-            "symbol", "exchange", "timeframe", "price", "bias", "decision",
+            "symbol", "exchange", "instrument", "timeframe", "price", "bias", "decision",
             "entry_low", "entry_high", "sl", "tp1", "tp2", "tp3",
             "confidence", "total_score", "regime", "sd_range_json", "oi_proxy_json",
-            "volume_json", "levels_json", "reason_codes_json", "ai_gate_json",
+            "volume_json", "technical_json", "levels_json", "score_breakdown_json", "reason_codes_json", "ai_gate_json",
             "source_score_id", "status", "created_at",
         ]
         values = dict(signal)
         values.setdefault("exchange", "OANDA")
+        values.setdefault("instrument", f"{values.get('exchange') or 'OANDA'}:{values.get('symbol')}")
         values.setdefault("timeframe", "15m")
         values.setdefault("status", "active")
         for json_field in _JSON_FIELDS:
@@ -151,6 +155,27 @@ class SignalAiResponseRepository:
         initialize_database(self.db_path)
 
     def fingerprint_signal(self, signal: Mapping[str, Any]) -> str:
+        plan = signal.get("plan") or {}
+        payload = {
+            "symbol": signal.get("symbol"),
+            "exchange": signal.get("exchange"),
+            "instrument": signal.get("instrument"),
+            "timeframe": signal.get("timeframe"),
+            "bias": signal.get("bias"),
+            "decision": signal.get("decision"),
+            "score": signal.get("score") or signal.get("total_score"),
+            "regime": signal.get("regime"),
+            "score_breakdown": signal.get("score_breakdown") or {},
+            "oi_proxy": signal.get("oi_proxy") or {},
+            "entry_zone": plan.get("entry_zone") if isinstance(plan, Mapping) else None,
+            "sl": plan.get("sl") if isinstance(plan, Mapping) else None,
+            "tp": plan.get("tp") if isinstance(plan, Mapping) else None,
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
+
+    def legacy_fingerprint_signal(self, signal: Mapping[str, Any]) -> str:
+        """Return the pre-instrument/schema fingerprint for backward cache reads."""
         plan = signal.get("plan") or {}
         payload = {
             "symbol": signal.get("symbol"),
@@ -215,16 +240,55 @@ class SignalAiResponseRepository:
                 )
         return None if row is None else str(row[0])
 
+    def has_alert_delivery(self, symbol: str, timeframe: str, signal_fingerprint: str, target: str) -> bool:
+        with connect_database(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM ai_signal_alert_deliveries
+                WHERE symbol=? AND timeframe=? AND signal_fingerprint=? AND target=?
+                LIMIT 1
+                """,
+                (symbol.upper(), timeframe, signal_fingerprint, target),
+            ).fetchone()
+        return row is not None
+
+    def mark_alert_delivered(self, symbol: str, timeframe: str, signal_fingerprint: str, target: str) -> int:
+        now = _utc_now().isoformat()
+        with connect_database(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO ai_signal_alert_deliveries
+                (symbol, timeframe, signal_fingerprint, target, delivered_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (symbol.upper(), timeframe, signal_fingerprint, target, now),
+            )
+            row = conn.execute(
+                """
+                SELECT id FROM ai_signal_alert_deliveries
+                WHERE symbol=? AND timeframe=? AND signal_fingerprint=? AND target=?
+                """,
+                (symbol.upper(), timeframe, signal_fingerprint, target),
+            ).fetchone()
+        return int(row[0])
+
     def build_ai_gate(self, signal: Mapping[str, Any]) -> dict[str, Any]:
         symbol = str(signal.get("symbol") or "XAUUSD").upper()
         timeframe = str(signal.get("timeframe") or "15m")
         fingerprint = self.fingerprint_signal(signal)
         cached = self.get_cached_response(symbol, timeframe, fingerprint)
+        cache_fingerprint = fingerprint
+        if not cached:
+            legacy_fingerprint = self.legacy_fingerprint_signal(signal)
+            if legacy_fingerprint != fingerprint:
+                cached = self.get_cached_response(symbol, timeframe, legacy_fingerprint)
+                cache_fingerprint = legacy_fingerprint if cached else fingerprint
         if cached:
             return {
                 "should_ask_ai": False,
                 "reason": "CACHED_AI_RESPONSE_REUSABLE",
                 "signal_fingerprint": fingerprint,
+                "cache_fingerprint": cache_fingerprint,
                 "cached_response": cached,
             }
 
@@ -239,5 +303,6 @@ class SignalAiResponseRepository:
             "should_ask_ai": bool(should),
             "reason": "TRADE_SIGNAL_NEEDS_AI_SUMMARY" if should else "NO_TRADE_CONDITION",
             "signal_fingerprint": fingerprint,
+            "cache_fingerprint": None,
             "cached_response": None,
         }

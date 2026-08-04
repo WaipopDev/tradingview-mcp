@@ -379,7 +379,7 @@ def latest_trade_signal(symbol: str = "XAUUSD", timeframe: str = "") -> dict:
     return signal
 
 
-@mcp.tool(annotations=ToolAnnotations(title="Analyze and Store Trade Signal", readOnlyHint=True, destructiveHint=False, openWorldHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="Analyze and Store Trade Signal", readOnlyHint=False, destructiveHint=False, openWorldHint=True))
 def analyze_and_store_signal(symbol: str = "XAUUSD", exchange: str = "OANDA", timeframe: str = "15m") -> dict:
     """Analyze a symbol, persist the compact signal to SQLite, and return it.
 
@@ -399,7 +399,7 @@ def analyze_and_store_signal(symbol: str = "XAUUSD", exchange: str = "OANDA", ti
     return _analyze_and_store_signal(symbol=symbol, exchange=exchange_clean, timeframe=timeframe_clean)
 
 
-@mcp.tool(annotations=ToolAnnotations(title="Store AI Signal Response", readOnlyHint=True, destructiveHint=False, openWorldHint=False))
+@mcp.tool(annotations=ToolAnnotations(title="Store AI Signal Response", readOnlyHint=False, destructiveHint=False, openWorldHint=False))
 def store_ai_signal_response(
     symbol: str,
     timeframe: str,

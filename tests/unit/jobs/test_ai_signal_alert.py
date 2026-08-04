@@ -30,7 +30,8 @@ def test_build_ai_prompt_is_english_but_requests_concise_thai_answer():
     assert "OANDA:XAUUSD" in prompt
     assert "SELL" in prompt
     assert "4088-4093" in prompt
-    assert "Do not fetch additional data" in prompt
+    assert "Do not call tools" in prompt
+    assert "do not fetch TradingView/raw market data" in prompt
     assert "Respond in concise Thai" in prompt
     assert "ห้ามดึงข้อมูลเพิ่ม" not in prompt
     assert "fp123" in prompt

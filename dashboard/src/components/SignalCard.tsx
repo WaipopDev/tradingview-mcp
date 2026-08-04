@@ -19,6 +19,20 @@ function decisionThai(decision?: string) {
   return decision ?? "รอยืนยัน";
 }
 
+function scoreColor(score?: number | null) {
+  if (typeof score !== "number") return "text-slate-100";
+  if (score >= 70) return "text-emerald-200";
+  if (score >= 55) return "text-amber-100";
+  return "text-rose-200";
+}
+
+function rangeValue(data: Record<string, unknown> | undefined, lowKey: string, highKey: string) {
+  const low = data?.[lowKey];
+  const high = data?.[highKey];
+  if (low === undefined || low === null || high === undefined || high === null) return "-";
+  return `${valueOrDash(low)} - ${valueOrDash(high)}`;
+}
+
 export function SignalCard({ signal }: { signal: LatestSignal }) {
   if (signal.error) {
     return (
@@ -36,20 +50,23 @@ export function SignalCard({ signal }: { signal: LatestSignal }) {
   const resistance = Array.isArray((signal.levels as { resistance?: unknown[] } | undefined)?.resistance)
     ? ((signal.levels as { resistance?: number[] }).resistance?.join(" / ") ?? "-")
     : "-";
+  const sd1Range = rangeValue(signal.sd_range, "sd1_low", "sd1_high");
+  const flowDirection = valueOrDash(signal.oi_proxy?.flow_direction);
+  const oiIsProxyOnly = signal.oi_proxy?.real_open_interest_available === false;
 
   return (
     <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
       <div className={`rounded-3xl border p-6 shadow-2xl ${biasClass(signal.bias)}`}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-sm uppercase tracking-[0.3em] opacity-70">{signal.exchange ?? "OANDA"}:{signal.symbol ?? "XAUUSD"}</p>
+            <p className="text-sm uppercase tracking-[0.3em] opacity-70">{signal.instrument ?? `${signal.exchange ?? "OANDA"}:${signal.symbol ?? "XAUUSD"}`}</p>
             <h2 className="mt-3 text-5xl font-bold">{signal.bias ?? "WAIT"}</h2>
             <p className="mt-2 text-lg opacity-80">{decisionThai(signal.decision)}</p>
           </div>
           <div className="rounded-2xl bg-black/25 p-4 text-right">
             <p className="text-sm opacity-70">ราคา</p>
             <p className="text-3xl font-semibold">{valueOrDash(signal.price)}</p>
-            <p className="mt-2 text-sm opacity-70">คะแนน {valueOrDash(signal.score)} / 100</p>
+            <p className={`mt-2 text-sm font-semibold ${scoreColor(signal.score)}`}>คะแนน {valueOrDash(signal.score)} / 100</p>
           </div>
         </div>
 
@@ -59,16 +76,23 @@ export function SignalCard({ signal }: { signal: LatestSignal }) {
           <Metric label="TP" value={signal.plan?.tp?.join(" / ") ?? "-"} />
           <Metric label="TF" value={signal.timeframe ?? "-"} />
         </div>
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <Metric label="SD-OI" value={sd1Range} />
+          <Metric label="ทิศทาง OI" value={flowDirection} />
+          <Metric label="เงื่อนไข AI" value={signal.ai_gate?.should_ask_ai ? "ถาม AI" : signal.ai_gate?.cached_response ? "ใช้ cache" : "ไม่ถาม"} />
+        </div>
       </div>
 
       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
         <h3 className="text-xl font-semibold">บริบทตลาด</h3>
         <div className="mt-5 space-y-3 text-sm text-slate-300">
-          <Row label="Regime" value={valueOrDash(signal.regime)} />
+          <Row label="รูปแบบตลาด" value={valueOrDash(signal.regime)} />
           <Row label="ความมั่นใจ" value={valueOrDash(signal.confidence)} />
           <Row label="อายุข้อมูล" value={`${signal.data_age_seconds ?? 0} วินาที`} />
           <Row label="แนวรับ" value={support} />
           <Row label="แนวต้าน" value={resistance} />
+          <Row label="ข้อจำกัด OI" value={oiIsProxyOnly ? "OANDA:XAUUSD ไม่มี OI กลาง ใช้ SD/OI proxy เท่านั้น" : valueOrDash(signal.oi_proxy?.limitation)} />
         </div>
       </div>
     </section>

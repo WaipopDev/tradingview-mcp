@@ -7,12 +7,16 @@ are rejected at the Tools step of the portal, so this test makes the
 requirement permanent: a newly added tool without annotations fails CI here
 before it can fail a directory review.
 
-Every tool in this server is read-only market analysis — nothing writes,
-deletes, sends, or mutates external state — so readOnlyHint must be True
-across the board (and that read-only posture is an approval advantage for a
-finance connector: no financial-transaction risk).
+Most tools in this server are read-only market analysis. Tools that persist
+local SQLite cache rows must explicitly set readOnlyHint=False so MCP clients do
+not treat them as side-effect-free. None of these tools place trades, delete
+data, or perform destructive external actions, so destructiveHint remains False
+across the board.
 """
 from tradingview_mcp.server import mcp
+
+
+WRITE_TOOLS = {"analyze_and_store_signal", "store_ai_signal_response"}
 
 
 def _all_tools():
@@ -26,9 +30,25 @@ def test_every_tool_has_annotations_with_title():
     assert not missing, f"tools missing annotations/title (directory submissions reject these): {missing}"
 
 
-def test_every_tool_is_declared_read_only():
-    not_ro = [t.name for t in _all_tools() if t.annotations is None or t.annotations.readOnlyHint is not True]
-    assert not_ro == [], f"tools not declared read-only: {not_ro}"
+def test_read_only_hint_matches_side_effect_profile():
+    tools = _all_tools()
+
+    missing_write_tools = WRITE_TOOLS - {t.name for t in tools}
+    assert missing_write_tools == set(), f"expected write tools not registered: {missing_write_tools}"
+
+    wrong_read_only = [
+        t.name
+        for t in tools
+        if t.name not in WRITE_TOOLS and (t.annotations is None or t.annotations.readOnlyHint is not True)
+    ]
+    wrong_write_tools = [
+        t.name
+        for t in tools
+        if t.name in WRITE_TOOLS and (t.annotations is None or t.annotations.readOnlyHint is not False)
+    ]
+
+    assert wrong_read_only == [], f"read-only tools not declared read-only: {wrong_read_only}"
+    assert wrong_write_tools == [], f"write tools not declared with readOnlyHint=False: {wrong_write_tools}"
 
 
 def test_every_tool_explicitly_declares_non_destructive():

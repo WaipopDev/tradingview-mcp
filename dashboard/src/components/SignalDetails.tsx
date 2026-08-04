@@ -23,22 +23,45 @@ const KEY_LABELS: Record<string, string> = {
   state: "สถานะ",
   ratio: "อัตราส่วน",
   atr_volatility: "ความผันผวน ATR",
+  source_symbol: "สัญลักษณ์ต้นทาง",
+  technical_rating: "เรตติ้งเทคนิค",
+  recommendation: "คำแนะนำ",
+  mtf_alignment: "คะแนน MTF",
+  structure_smc_liquidity: "คะแนน SMC/สภาพคล่อง",
+  volume_flow: "คะแนน Volume/Flow",
+  volatility_regime: "คะแนนความผันผวน",
+  risk_reward: "คะแนน Risk/Reward",
+  event_guard: "คะแนน Event Guard",
 };
 
 export function SignalDetails({ signal }: { signal: LatestSignal }) {
   const reasonCodes = signal.reason_codes ?? [];
+  const oiIsProxyOnly = signal.oi_proxy?.real_open_interest_available === false;
   return (
     <section className="grid gap-4 lg:grid-cols-3">
       <Panel title="กรอบ SD" data={signal.sd_range} />
-      <Panel title="OI / Flow Proxy" data={signal.oi_proxy} />
+      <Panel title="SD-OI / Flow Proxy" data={signal.oi_proxy} />
       <Panel title="ปริมาณ / ATR" data={signal.volume} />
+      <Panel title="เทคนิค" data={signal.technical} />
+      <Panel title="คะแนนย่อย" data={signal.score_breakdown} />
+      <div className="rounded-3xl border border-amber-400/20 bg-amber-500/10 p-6">
+        <h3 className="text-xl font-semibold text-amber-100">ข้อจำกัด OANDA / OI</h3>
+        <p className="mt-4 text-sm leading-6 text-amber-100/80">
+          {oiIsProxyOnly
+            ? "OANDA:XAUUSD เป็น spot/CFD ไม่มี Open Interest กลางแบบ exchange; ค่า SD-OI ในแดชบอร์ดเป็น proxy จากราคา/ATR/แนวรับแนวต้านหรือแหล่งประกอบ ไม่ใช่ OI จริง"
+            : formatValue(signal.oi_proxy?.limitation) !== "-"
+              ? formatValue(signal.oi_proxy?.limitation)
+              : "ยังไม่มีข้อจำกัด OI จากสัญญาณล่าสุด"}
+        </p>
+      </div>
       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6 lg:col-span-3">
         <h3 className="text-xl font-semibold">เงื่อนไขถาม AI</h3>
-        <div className="mt-4 grid gap-3 text-sm md:grid-cols-4">
+        <div className="mt-4 grid gap-3 text-sm md:grid-cols-5">
           <GateItem label="ถาม AI" value={signal.ai_gate?.should_ask_ai ? "ใช่" : "ไม่"} />
           <GateItem label="เหตุผล" value={translateGateReason(signal.ai_gate?.reason)} />
-          <GateItem label="Fingerprint" value={signal.ai_gate?.signal_fingerprint ?? "-"} />
-          <GateItem label="Cache" value={signal.ai_gate?.cached_response ? "ใช้คำตอบเดิมได้" : "-"} />
+          <GateItem label="ลายนิ้วมือสัญญาณ" value={signal.ai_gate?.signal_fingerprint ?? "-"} />
+          <GateItem label="ลายนิ้วมือ cache" value={signal.ai_gate?.cache_fingerprint ?? "-"} />
+          <GateItem label="สถานะ cache" value={signal.ai_gate?.cached_response ? "ใช้คำตอบเดิมได้" : "-"} />
         </div>
       </div>
       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6 lg:col-span-3">

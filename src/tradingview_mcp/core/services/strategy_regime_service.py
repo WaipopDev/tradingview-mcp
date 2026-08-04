@@ -185,14 +185,26 @@ def _score_volume_atr(technical: dict[str, Any], direction: str) -> tuple[int, l
 def _score_flow(flow_context: Optional[dict[str, Any]], direction: str) -> tuple[int, list[str]]:
     if not flow_context:
         return 8, ["No options/futures/sentiment proxy provided; neutral proxy score."]
-    flow_dir = str(flow_context.get("direction", "WAIT")).upper()
+    if not isinstance(flow_context, dict):
+        return 8, ["Invalid flow_context payload; neutral proxy score."]
+
+    flow_dir = str(flow_context.get("direction", "WAIT")).strip().upper()
+    if flow_dir not in {"BUY", "SELL", "WAIT"}:
+        flow_dir = "WAIT"
     conf = _lower(flow_context.get("confidence"))
     source = flow_context.get("source", "flow proxy")
+    notes_prefix = f"{source}:"
+    notes_suffix: list[str] = []
+    if flow_context.get("real_open_interest_available") is False:
+        notes_suffix.append("real_open_interest_available=false; treating flow context as proxy only.")
+    if flow_context.get("limitation"):
+        notes_suffix.append(str(flow_context.get("limitation")))
+
     if direction == "WAIT" or flow_dir == "WAIT":
-        return 7, [f"{source}: neutral/wait flow proxy."]
+        return 7, [f"{notes_prefix} neutral/wait flow proxy.", *notes_suffix]
     if flow_dir == direction:
-        return (15 if conf == "high" else 12), [f"{source}: proxy confirms {direction}."]
-    return (2 if conf == "high" else 4), [f"{source}: proxy conflicts with {direction} bias."]
+        return (15 if conf == "high" else 12), [f"{notes_prefix} proxy confirms {direction}.", *notes_suffix]
+    return (2 if conf == "high" else 4), [f"{notes_prefix} proxy conflicts with {direction} bias.", *notes_suffix]
 
 
 def score_strategy_regime(

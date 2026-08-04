@@ -33,8 +33,12 @@ def test_wrapped_tool_still_returns_the_original_result(monkeypatch):
     assert "X" in text and "RSI" in text, f"unexpected result shape: {text[:120]}"
 
 
+WRITE_TOOLS = {"analyze_and_store_signal", "store_ai_signal_response"}
+
+
 def test_offload_preserves_annotations_and_metadata():
     for t in _tools():
         assert t.annotations is not None and t.annotations.title
-        assert t.annotations.readOnlyHint is True
+        expected_read_only = t.name not in WRITE_TOOLS
+        assert t.annotations.readOnlyHint is expected_read_only
         assert t.fn_metadata is not None  # validation schema still from the original signature

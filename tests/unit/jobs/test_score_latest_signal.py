@@ -14,10 +14,13 @@ def test_store_compact_trade_signal_persists_and_returns_latest(tmp_path):
             "symbol": "XAUUSD",
             "exchange": "OANDA",
             "timeframe": "15m",
+            "instrument": "OANDA:XAUUSD",
             "price": 4078.2,
             "bias": "BUY",
             "decision": "WAIT_CONFIRMATION",
             "score": 61,
+            "technical": {"source_symbol": "OANDA:XAUUSD"},
+            "score_breakdown": {"mtf_alignment": 12, "oi_volume_proxy": 4},
             "plan": {"entry_zone": "4075-4078", "sl": 4068, "tp": [4088, 4098]},
             "reason_codes": ["LOW_VOL_WAIT_CONFIRMATION"],
             "created_at": "2026-08-03T10:05:00+00:00",
@@ -27,7 +30,10 @@ def test_store_compact_trade_signal_persists_and_returns_latest(tmp_path):
 
     assert result["id"] == 1
     assert result["latest"]["symbol"] == "XAUUSD"
+    assert result["latest"]["instrument"] == "OANDA:XAUUSD"
     assert result["latest"]["score"] == 61
+    assert result["latest"]["technical"]["source_symbol"] == "OANDA:XAUUSD"
+    assert result["latest"]["score_breakdown"]["mtf_alignment"] == 12
     assert result["latest"]["plan"]["entry_zone"] == "4075-4078"
 
     repo_latest = TradeSignalRepository(db_path).get_latest_trade_signal("XAUUSD")
