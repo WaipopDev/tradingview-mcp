@@ -1,6 +1,6 @@
 # Trad Manager Task List
 
-Owner: Trad Manager Agent
+Owner: MGT (Trad Manager Agent)
 Scope: /Users/waipop/MainWTN/Hermes/trad and local runtime scripts under /Users/waipop/.hermes/scripts
 Last autonomous review: 2026-08-05 01:02 ICT
 
