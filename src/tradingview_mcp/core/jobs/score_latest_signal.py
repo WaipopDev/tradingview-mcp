@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
-from tradingview_mcp.core.storage.database import PathLike
+from tradingview_mcp.core.storage.database import PathLike, connect_database
 from tradingview_mcp.core.storage.repositories import TradeSignalRepository
 
 
@@ -35,6 +35,69 @@ def _parse_entry_zone(value: Any) -> tuple[float | None, float | None]:
         return numeric, numeric
     except ValueError:
         return None, None
+
+
+def _nested(mapping: Mapping[str, Any], *path: str) -> Any:
+    cur: Any = mapping
+    for key in path:
+        if not isinstance(cur, Mapping):
+            return None
+        cur = cur.get(key)
+    return cur
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        return None if value is None else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _store_market_snapshot(summary: Mapping[str, Any], db_path: PathLike | None = None) -> None:
+    """Backfill market_snapshots from compact technical payload for dashboard/manager reads."""
+    technical = summary.get("technical") or {}
+    if not isinstance(technical, Mapping):
+        technical = {}
+    price_data_raw = technical.get("price_data")
+    rsi_raw = technical.get("rsi")
+    atr_raw = technical.get("atr")
+    macd_raw = technical.get("macd")
+    ema_raw = technical.get("ema")
+    price_data: Mapping[str, Any] = price_data_raw if isinstance(price_data_raw, Mapping) else {}
+    rsi: Mapping[str, Any] = rsi_raw if isinstance(rsi_raw, Mapping) else {}
+    atr: Mapping[str, Any] = atr_raw if isinstance(atr_raw, Mapping) else {}
+    macd: Mapping[str, Any] = macd_raw if isinstance(macd_raw, Mapping) else {}
+    ema: Mapping[str, Any] = ema_raw if isinstance(ema_raw, Mapping) else {}
+    raw_json = json.dumps(technical, ensure_ascii=False)
+    record = {
+        "symbol": str(summary.get("symbol") or "XAUUSD").upper(),
+        "exchange": summary.get("exchange") or "OANDA",
+        "timeframe": summary.get("timeframe") or "15m",
+        "price": _to_float(summary.get("price") or price_data.get("current_price") or price_data.get("price")),
+        "open": _to_float(price_data.get("open")),
+        "high": _to_float(price_data.get("high")),
+        "low": _to_float(price_data.get("low")),
+        "close": _to_float(price_data.get("close") or summary.get("price")),
+        "volume": _to_float(price_data.get("volume") or _nested(summary, "volume", "value")),
+        "rsi": _to_float(rsi.get("value")),
+        "atr": _to_float(atr.get("value")),
+        "bbw": _to_float(_nested(technical, "bollinger_bands", "bandwidth")),
+        "ema20": _to_float(ema.get("ema20") or _nested(technical, "moving_averages", "ema20")),
+        "ema50": _to_float(ema.get("ema50") or _nested(technical, "moving_averages", "ema50")),
+        "ema200": _to_float(ema.get("ema200") or _nested(technical, "moving_averages", "ema200")),
+        "macd": _to_float(macd.get("macd") or macd.get("value")),
+        "raw_json": raw_json,
+        "created_at": summary.get("created_at"),
+    }
+    with connect_database(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO market_snapshots
+            (symbol, exchange, timeframe, price, open, high, low, close, volume, rsi, atr, bbw, ema20, ema50, ema200, macd, raw_json, created_at)
+            VALUES (:symbol, :exchange, :timeframe, :price, :open, :high, :low, :close, :volume, :rsi, :atr, :bbw, :ema20, :ema50, :ema200, :macd, :raw_json, :created_at)
+            """,
+            record,
+        )
 
 
 def store_compact_trade_signal(summary: Mapping[str, Any], db_path: PathLike | None = None) -> dict[str, Any]:
@@ -77,6 +140,7 @@ def store_compact_trade_signal(summary: Mapping[str, Any], db_path: PathLike | N
     }
 
     repo = TradeSignalRepository(db_path)
+    _store_market_snapshot(summary, db_path=db_path)
     inserted_id = repo.insert_trade_signal(record)
     latest = repo.get_latest_trade_signal(record["symbol"], timeframe=record["timeframe"])
     return {"id": inserted_id, "latest": latest}
