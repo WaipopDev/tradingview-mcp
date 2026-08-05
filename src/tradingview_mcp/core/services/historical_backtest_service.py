@@ -16,7 +16,7 @@ from tradingview_mcp.core.storage.database import PathLike, connect_database, in
 
 WIN_RESULTS = {"TP"}
 LOSS_RESULTS = {"SL"}
-_VALID_STRATEGIES = {"bollinger_rejection", "ema_trend", "live_logic_replay"}
+_VALID_STRATEGIES = {"bollinger_rejection", "ema_trend", "live_logic_replay", "production_entry_replay"}
 
 
 @dataclass(frozen=True)
@@ -463,6 +463,199 @@ def summarize_trades(trades: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+MIN_ENTRY_SCORE = 70
+MIN_SL_DISTANCE = 5.0
+MAX_SL_DISTANCE = 8.0
+
+
+def _prod_clamp_sl(direction: str, entry_low: float, entry_high: float, sl: float) -> float:
+    if direction == "BUY":
+        distance = max(MIN_SL_DISTANCE, min(MAX_SL_DISTANCE, entry_high - sl))
+        return entry_high - distance
+    distance = max(MIN_SL_DISTANCE, min(MAX_SL_DISTANCE, sl - entry_low))
+    return entry_low + distance
+
+
+def _production_order_from_candle(candles: list[Candle], i: int, rsi: list[float | None], atr: list[float | None], ema20: list[float | None], ema50: list[float | None]) -> dict[str, Any] | None:
+    c = candles[i]
+    rsi_i, atr_i, ema20_i, ema50_i = rsi[i], atr[i], ema20[i], ema50[i]
+    if rsi_i is None or atr_i is None or ema20_i is None or ema50_i is None:
+        return None
+    price = c.close
+    sd1_low, sd1_high = price - atr_i, price + atr_i
+    sd2_low, sd2_high = price - (2 * atr_i), price + (2 * atr_i)
+    pivot = (c.high + c.low + c.close) / 3
+    bullish = price > ema20_i and ema20_i > ema50_i and 45 <= rsi_i <= 68
+    bearish = price < ema20_i and ema20_i < ema50_i and 32 <= rsi_i <= 55
+    if not (bullish or bearish):
+        return None
+    if bearish:
+        direction = "SELL"
+        entry_low = min(max(price + 1.0, pivot), max(ema20_i, pivot))
+        entry_high = max(ema20_i, pivot, price + 2.5)
+        sl = entry_high + 5.0
+        tp1, tp2 = sd1_low, sd2_low
+    else:
+        direction = "BUY"
+        entry_low = min(max(sd1_low, price - 3.0), price)
+        entry_high = max(min(price + 0.8, sd1_high), entry_low)
+        sl = entry_low - 5.0
+        tp1, tp2 = sd1_high, sd2_high
+    entry_low, entry_high = min(entry_low, entry_high), max(entry_low, entry_high)
+    sl = _prod_clamp_sl(direction, entry_low, entry_high, sl)
+    rr = abs(tp1 - entry_high) / max(0.01, abs(entry_low - sl))
+    score = 70
+    if direction == "BUY" and 45 <= rsi_i <= 66:
+        score += 15
+    elif direction == "SELL" and 34 <= rsi_i <= 55:
+        score += 15
+    elif (direction == "BUY" and rsi_i >= 70) or (direction == "SELL" and rsi_i <= 30):
+        score -= 20
+    if rr >= 1.5:
+        score += 15
+    elif rr < 1.0:
+        score -= 15
+    score = max(0, min(100, int(round(score))))
+    if score < MIN_ENTRY_SCORE:
+        return None
+    return {"index": i, "direction": direction, "score": score, "setup_type": "production_entry/continuation_trend", "session_label": session_label(c.datetime_utc), "entry_low": entry_low, "entry_high": entry_high, "sl": sl, "tp": tp1, "tp2": tp2, "rr": rr, "rsi": rsi_i, "atr": atr_i, "ema20": ema20_i, "ema50": ema50_i}
+
+
+def _simulate_production_order(candles: list[Candle], order: Mapping[str, Any], max_hold_bars: int) -> dict[str, Any] | None:
+    i = int(order["index"])
+    direction = str(order["direction"])
+    entry_low, entry_high = float(order["entry_low"]), float(order["entry_high"])
+    sl, tp = float(order["sl"]), float(order["tp"])
+    entry_c: Candle | None = None
+    entry_j = -1
+    for j in range(i + 1, min(len(candles), i + 1 + max_hold_bars)):
+        c = candles[j]
+        if c.low <= entry_high and c.high >= entry_low:
+            entry_c = c
+            entry_j = j
+            break
+    if entry_c is None:
+        return None
+    entry = min(max(entry_c.open, entry_low), entry_high)
+    risk = _risk(entry, sl)
+    mfe = mae = 0.0
+    result = "TIME_EXIT"
+    exit_c = candles[min(len(candles) - 1, entry_j + max_hold_bars)]
+    exit_price = exit_c.close
+    hold = 0
+    for j in range(entry_j, min(len(candles), entry_j + max_hold_bars)):
+        c = candles[j]
+        hold = j - entry_j + 1
+        if direction == "BUY":
+            mfe = max(mfe, c.high - entry)
+            mae = max(mae, entry - c.low)
+            hit_sl, hit_tp = c.low <= sl, c.high >= tp
+        else:
+            mfe = max(mfe, entry - c.low)
+            mae = max(mae, c.high - entry)
+            hit_sl, hit_tp = c.high >= sl, c.low <= tp
+        if hit_sl and hit_tp:
+            result, exit_price, exit_c = "SL", sl, c
+            break
+        if hit_sl:
+            result, exit_price, exit_c = "SL", sl, c
+            break
+        if hit_tp:
+            result, exit_price, exit_c = "TP", tp, c
+            break
+    if result == "TP":
+        r_multiple = abs(tp - entry) / risk
+    elif result == "SL":
+        r_multiple = -1.0
+    else:
+        r_multiple = (exit_price - entry) / risk if direction == "BUY" else (entry - exit_price) / risk
+    return {"direction": direction, "setup_type": order.get("setup_type"), "session_label": order.get("session_label"), "entry_ts": entry_c.ts, "entry_time": entry_c.datetime_utc, "entry_price": entry, "sl": sl, "tp": tp, "exit_ts": exit_c.ts, "exit_time": exit_c.datetime_utc, "exit_price": exit_price, "result": result, "r_multiple": r_multiple, "mfe": mfe, "mae": mae, "hold_bars": hold, "metadata": {k: order.get(k) for k in ["score", "rsi", "atr", "ema20", "ema50", "entry_low", "entry_high", "rr", "tp2"]}}
+
+
+def _blocked_by_production_duplicate(order: Mapping[str, Any], open_trades: list[dict[str, Any]], recent_orders: list[Mapping[str, Any]], now_ts: int) -> bool:
+    direction = str(order["direction"])
+    low, high = float(order["entry_low"]), float(order["entry_high"])
+    center = (low + high) / 2
+    for t in open_trades:
+        if t["direction"] != direction:
+            continue
+        old_low = float(t["metadata"].get("entry_low") or t["entry_price"])
+        old_high = float(t["metadata"].get("entry_high") or t["entry_price"])
+        overlap = max(0.0, min(old_high, high) - max(old_low, low))
+        if overlap / max(0.01, high - low) >= 0.25 or abs(((old_low + old_high) / 2) - center) <= 10.0:
+            return True
+    if int(order.get("score") or 0) >= 85:
+        return False
+    for prev in reversed(recent_orders):
+        if now_ts - int(prev["ts"]) > 45 * 60:
+            break
+        if prev["direction"] != direction:
+            continue
+        old_low, old_high = float(prev["entry_low"]), float(prev["entry_high"])
+        overlap = max(0.0, min(old_high, high) - max(old_low, low))
+        if abs(((old_low + old_high) / 2) - center) <= 3.0 or overlap / max(0.01, high - low) >= 0.35:
+            return True
+    return False
+
+
+def _blocked_by_production_adaptive(order: Mapping[str, Any], closed_trades: list[dict[str, Any]], now_ts: int) -> bool:
+    direction = str(order["direction"])
+    rows = [t for t in reversed(closed_trades) if t["direction"] == direction][:8]
+    if not rows:
+        return False
+    recent3_losses = len(rows) >= 3 and all(str(r["result"]) in {"SL", "CUT"} for r in rows[:3])
+    if recent3_losses:
+        last_closed_ts = int(rows[0]["exit_ts"] or now_ts)
+        if now_ts - last_closed_ts < 90 * 60:
+            return True
+        if int(order.get("score") or 0) < 85:
+            return True
+    recent_90_losses = sum(1 for r in rows if now_ts - int(r["exit_ts"] or now_ts) <= 90 * 60 and str(r["result"]) in {"SL", "CUT"})
+    if recent_90_losses >= 3 and int(order.get("score") or 0) < 85:
+        return True
+    rsi = order.get("rsi")
+    if rsi is not None and direction == "BUY" and float(rsi) >= 68:
+        return True
+    if rsi is not None and direction == "SELL" and float(rsi) <= 32:
+        return True
+    return False
+
+
+def _run_production_entry_replay(candles: list[Candle], max_hold_bars: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    closes = [c.close for c in candles]
+    highs = [c.high for c in candles]
+    lows = [c.low for c in candles]
+    rsi = calc_rsi(closes, 14)
+    atr = calc_atr(highs, lows, closes, 14)
+    ema20 = calc_ema(closes, 20)
+    ema50 = calc_ema(closes, 50)
+    trades: list[dict[str, Any]] = []
+    open_trades: list[dict[str, Any]] = []
+    recent_orders: list[Mapping[str, Any]] = []
+    blocked_duplicate = blocked_adaptive = candidates = 0
+    for i, c in enumerate(candles[:-2]):
+        open_trades = [t for t in open_trades if int(t.get("exit_ts") or 0) > c.ts]
+        order = _production_order_from_candle(candles, i, rsi, atr, ema20, ema50)
+        if not order:
+            continue
+        candidates += 1
+        if _blocked_by_production_duplicate(order, open_trades, recent_orders, c.ts):
+            blocked_duplicate += 1
+            continue
+        if _blocked_by_production_adaptive(order, trades, c.ts):
+            blocked_adaptive += 1
+            continue
+        trade = _simulate_production_order(candles, order, max_hold_bars)
+        recent_orders.append({"ts": c.ts, "direction": order["direction"], "entry_low": order["entry_low"], "entry_high": order["entry_high"]})
+        if trade is None:
+            continue
+        trades.append(trade)
+        if str(trade["result"]) == "TIME_EXIT":
+            open_trades.append(trade)
+    meta = {"production_candidates": candidates, "blocked_duplicate": blocked_duplicate, "blocked_adaptive": blocked_adaptive}
+    return trades, meta
+
+
 def run_db_backtest(
     symbol: str = "XAUUSD",
     exchange: str = "OANDA",
@@ -488,33 +681,38 @@ def run_db_backtest(
     candles = load_candles(symbol, exchange, timeframe, db_path, limit)
     if len(candles) < 60:
         return {"error": f"Not enough candles ({len(candles)}); collect at least 60 bars first."}
-    session_filter = _csv_set(allowed_sessions)
-    direction_filter = _csv_set(allowed_directions)
-    setup_filter = _csv_set(allowed_setups)
-    mtf_filter = (mtf_filter or "off").strip()
-    if mtf_filter not in {"off", "with_trend", "strict_with_trend", "rejection_countertrend_only"}:
-        return {"error": "Unknown mtf_filter; choose off, with_trend, strict_with_trend, rejection_countertrend_only"}
-    mtf_map: dict[int, str] | None = None
-    if mtf_filter != "off":
-        higher = load_candles(symbol, exchange, mtf_timeframe, db_path, None)
-        mtf_map = _mtf_direction_map(candles, higher)
-        if not mtf_map:
-            return {"error": f"Not enough {mtf_timeframe} candles for mtf_filter={mtf_filter}"}
-    signals = _candidate_signals(candles, strategy, int(score_gate), session_filter, direction_filter, setup_filter, mtf_map, mtf_filter)
-    trades = [t for s in signals if (t := _simulate_trade(candles, s, float(rr), float(sl_atr), int(max_hold_bars))) is not None]
-    summary = summarize_trades(trades)
-    params = {
-        "score_gate": int(score_gate),
-        "rr": float(rr),
-        "sl_atr": float(sl_atr),
-        "max_hold_bars": int(max_hold_bars),
-        "limit": limit,
-        "allowed_sessions": sorted(session_filter) if session_filter else None,
-        "allowed_directions": sorted(direction_filter) if direction_filter else None,
-        "allowed_setups": sorted(setup_filter) if setup_filter else None,
-        "mtf_filter": mtf_filter,
-        "mtf_timeframe": mtf_timeframe,
-    }
+    if strategy == "production_entry_replay":
+        trades, production_meta = _run_production_entry_replay(candles, int(max_hold_bars))
+        summary = summarize_trades(trades)
+        params = {"score_gate": MIN_ENTRY_SCORE, "rr": "production_tp1", "sl_band": [MIN_SL_DISTANCE, MAX_SL_DISTANCE], "max_hold_bars": int(max_hold_bars), "limit": limit, **production_meta}
+    else:
+        session_filter = _csv_set(allowed_sessions)
+        direction_filter = _csv_set(allowed_directions)
+        setup_filter = _csv_set(allowed_setups)
+        mtf_filter = (mtf_filter or "off").strip()
+        if mtf_filter not in {"off", "with_trend", "strict_with_trend", "rejection_countertrend_only"}:
+            return {"error": "Unknown mtf_filter; choose off, with_trend, strict_with_trend, rejection_countertrend_only"}
+        mtf_map: dict[int, str] | None = None
+        if mtf_filter != "off":
+            higher = load_candles(symbol, exchange, mtf_timeframe, db_path, None)
+            mtf_map = _mtf_direction_map(candles, higher)
+            if not mtf_map:
+                return {"error": f"Not enough {mtf_timeframe} candles for mtf_filter={mtf_filter}"}
+        signals = _candidate_signals(candles, strategy, int(score_gate), session_filter, direction_filter, setup_filter, mtf_map, mtf_filter)
+        trades = [t for s in signals if (t := _simulate_trade(candles, s, float(rr), float(sl_atr), int(max_hold_bars))) is not None]
+        summary = summarize_trades(trades)
+        params = {
+            "score_gate": int(score_gate),
+            "rr": float(rr),
+            "sl_atr": float(sl_atr),
+            "max_hold_bars": int(max_hold_bars),
+            "limit": limit,
+            "allowed_sessions": sorted(session_filter) if session_filter else None,
+            "allowed_directions": sorted(direction_filter) if direction_filter else None,
+            "allowed_setups": sorted(setup_filter) if setup_filter else None,
+            "mtf_filter": mtf_filter,
+            "mtf_timeframe": mtf_timeframe,
+        }
     result = {
         "symbol": symbol.upper(),
         "exchange": exchange.upper(),

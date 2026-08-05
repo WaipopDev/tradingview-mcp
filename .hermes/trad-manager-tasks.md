@@ -28,6 +28,7 @@ Last autonomous review: 2026-08-05 08:18 ICT
 - [ ] Intake pending: no approved backend task yet.
 
 ### Data
+- [ ] MGT decision 2026-08-05: do exact production-logic replay before touching production Telegram/order logic.
 - [ ] Phase 2D approved 2026-08-05: optimize live_logic_replay with evidence-only filters (session, direction, setup, 1h MTF trend alignment) and store best candidates before any production logic change.
 - [ ] Phase 2C approved 2026-08-05: replay approximate current live Telegram entry logic over historical candles using `live_logic_replay`; evaluate score gate, duplicate guard, session, setup_type, ATR SL/RR TP before modifying live logic.
 - [ ] Phase 2B approved 2026-08-05: run DB-backed historical candle backtests from `historical_candles`, store `backtest_runs`/`backtest_trades`, start with `ema_trend` and `bollinger_rejection` strategy families.
@@ -85,6 +86,13 @@ Last autonomous review: 2026-08-05 08:18 ICT
   - High-confidence candidate (min 100 trades, stored run #6): SELL only, sessions Asia+NY/late signal filter, 1h with-trend, score_gate 70; 162 trades, WR 39.5%, ExpR +0.07, avg MFE 7.20, avg MAE 7.29, max loss streak 6.
   - Small-sample candidate (stored run #5): SELL rejection only, Asia+NY/late, 1h with-trend, 23 trades, WR 47.8%, ExpR +0.18, max loss streak 4; promising but needs more data before production.
   - MGT finding: filters can turn replay positive, but margin is small; propose paper-mode/shadow validation and exact production-logic replay before changing Telegram alerts.
+
+- [ ] 2026-08-05: Exact Production Entry Replay decision approved by Waipop; implemented and verified.
+  - Scope: `production_entry_replay` mirrors production deterministic entry concepts before touching live Telegram logic: hard floor score >=70, XAUUSD SL band 5–8 price units, entry-zone derivation, duplicate/open same-side guard, 45m recent similar-zone guard, 90m/adaptive loss guard, RSI hot/cold guard.
+  - Constraint: historical candles synthesize the original `trade_signals` technical payload; this is much closer to production entry-alert behavior than Phase 2C, but still not a byte-for-byte replay of every live collector payload.
+  - Verification run #7 on 15m 4-week-ish data: 1442 candidates, 310 duplicate-blocked, 399 adaptive-blocked, 686 trades, WR 49.4%, ExpR +0.11, Avg MFE 8.33, Avg MAE 6.36, max loss streak 8.
+  - Breakdown run #7: Asia 261 trades WR 56.3% ExpR +0.19; London/NY overlap 148 WR 48.0% ExpR +0.15; London 157 WR 46.5% ExpR ~0.00; NY/late 120 WR 40.0% ExpR +0.04. SELL 306 WR 50.0% ExpR +0.16; BUY 380 WR 48.9% ExpR +0.07.
+  - MGT finding: exact production-entry replay is materially better than approximate rejection replay and positive overall, but still needs shadow validation before production logic change.
 
 ## Proposed / awaiting Waipop approval
 

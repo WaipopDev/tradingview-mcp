@@ -110,6 +110,28 @@ def test_live_logic_replay_accepts_phase_2d_filters(tmp_path):
     assert trade_count == result["total_trades"]
 
 
+def test_production_entry_replay_stores_audit_run(tmp_path):
+    db_path = tmp_path / "signals.sqlite3"
+    ensure_history_schema(db_path)
+    prices = [4000.0 + i * 0.10 + math.sin(i / 4) * 2.0 for i in range(220)]
+    candles = [_candle(i, p) for i, p in enumerate(prices)]
+    store_historical_candles(candles, db_path)
+
+    result = run_db_backtest(
+        symbol="XAUUSD",
+        exchange="OANDA",
+        timeframe="5m",
+        strategy="production_entry_replay",
+        max_hold_bars=8,
+        db_path=db_path,
+    )
+
+    assert "error" not in result
+    assert result["strategy"] == "production_entry_replay"
+    assert result["params"]["score_gate"] == 70
+    assert "production_candidates" in result["params"]
+
+
 def test_run_db_backtest_requires_enough_candles(tmp_path):
     db_path = tmp_path / "signals.sqlite3"
     ensure_history_schema(db_path)
