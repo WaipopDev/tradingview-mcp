@@ -16,7 +16,7 @@ from tradingview_mcp.core.storage.database import PathLike, connect_database, in
 
 WIN_RESULTS = {"TP"}
 LOSS_RESULTS = {"SL"}
-_VALID_STRATEGIES = {"bollinger_rejection", "ema_trend"}
+_VALID_STRATEGIES = {"bollinger_rejection", "ema_trend", "live_logic_replay"}
 
 
 @dataclass(frozen=True)
@@ -152,7 +152,102 @@ def _score_trade(direction: str, rsi: float | None, ema20: float | None, ema50: 
     return max(0, min(100, score))
 
 
+def _candidate_live_logic_replay(candles: list[Candle], score_gate: int) -> list[dict[str, Any]]:
+    """Approximate current Telegram entry gate over historical candles.
+
+    Mirrors the important live guards rather than every integration detail:
+    - derived setup score must clear score_gate
+    - BUY avoids very hot RSI; SELL avoids very cold RSI
+    - same-direction near-duplicate zone guard for 45 minutes
+    - after 3 same-direction SL/CUT-like recent simulated losses is handled by
+      the trade simulator/report layer in Phase 2C analysis, not during signal
+      generation because future outcomes are unknown at entry time.
+    """
+    closes = [c.close for c in candles]
+    highs = [c.high for c in candles]
+    lows = [c.low for c in candles]
+    rsi = calc_rsi(closes, 14)
+    atr = calc_atr(highs, lows, closes, 14)
+    ema20 = calc_ema(closes, 20)
+    ema50 = calc_ema(closes, 50)
+    bb = calc_bollinger(closes, 20, 2.0)
+    signals: list[dict[str, Any]] = []
+    recent_zones: list[tuple[int, str, float, float]] = []
+    for i, c in enumerate(candles):
+        atr_i, rsi_i, ema20_i, ema50_i = atr[i], rsi[i], ema20[i], ema50[i]
+        if atr_i is None or rsi_i is None or ema20_i is None or ema50_i is None:
+            continue
+        direction: str | None = None
+        setup_type = "live_logic/continuation"
+        score = 50
+        # Trend-following pullback side of current entry derivation.
+        if ema20_i > ema50_i and c.close > ema20_i and 42 <= rsi_i <= 66:
+            direction = "BUY"
+            score += 20
+            setup_type = "live_logic/BUY_continuation"
+        elif ema20_i < ema50_i and c.close < ema20_i and 34 <= rsi_i <= 58:
+            direction = "SELL"
+            score += 20
+            setup_type = "live_logic/SELL_continuation"
+        # Range rejection / scalp-watch style side.
+        lower_i = bb["lower"][i]
+        upper_i = bb["upper"][i]
+        if lower_i is not None and c.low <= lower_i and c.close > c.open and rsi_i <= 48:
+            direction = "BUY"
+            score += 25
+            setup_type = "live_logic/BUY_rejection"
+        elif upper_i is not None and c.high >= upper_i and c.close < c.open and rsi_i >= 52:
+            direction = "SELL"
+            score += 25
+            setup_type = "live_logic/SELL_rejection"
+        if direction is None:
+            continue
+        if direction == "BUY" and rsi_i >= 70:
+            continue
+        if direction == "SELL" and rsi_i <= 30:
+            continue
+        # RR/ATR quality proxy.
+        if atr_i <= 0:
+            continue
+        score += 10
+        score = max(0, min(100, score))
+        if score < score_gate:
+            continue
+        entry_proxy = c.close
+        zone_low = entry_proxy - min(3.0, atr_i * 0.4)
+        zone_high = entry_proxy + min(3.0, atr_i * 0.4)
+        duplicate = False
+        for prev_ts, prev_dir, prev_low, prev_high in reversed(recent_zones):
+            if c.ts - prev_ts > 45 * 60:
+                break
+            if prev_dir != direction:
+                continue
+            center_distance = abs(((prev_low + prev_high) / 2) - ((zone_low + zone_high) / 2))
+            overlap = max(0.0, min(prev_high, zone_high) - max(prev_low, zone_low))
+            if center_distance <= 3.0 or overlap / max(0.01, zone_high - zone_low) >= 0.35:
+                duplicate = True
+                break
+        if duplicate:
+            continue
+        recent_zones.append((c.ts, direction, zone_low, zone_high))
+        signals.append({
+            "index": i,
+            "direction": direction,
+            "score": score,
+            "setup_type": setup_type,
+            "rsi": rsi_i,
+            "atr": atr_i,
+            "ema20": ema20_i,
+            "ema50": ema50_i,
+            "zone_low": zone_low,
+            "zone_high": zone_high,
+        })
+    return signals
+
+
 def _candidate_signals(candles: list[Candle], strategy: str, score_gate: int) -> list[dict[str, Any]]:
+    if strategy == "live_logic_replay":
+        return _candidate_live_logic_replay(candles, score_gate)
     closes = [c.close for c in candles]
     highs = [c.high for c in candles]
     lows = [c.low for c in candles]

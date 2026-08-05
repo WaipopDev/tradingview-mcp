@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--symbol", default="XAUUSD")
     p.add_argument("--exchange", default="OANDA")
     p.add_argument("--timeframe", default="15m")
-    p.add_argument("--strategy", default="ema_trend", choices=["ema_trend", "bollinger_rejection"])
+    p.add_argument("--strategy", default="live_logic_replay", choices=["ema_trend", "bollinger_rejection", "live_logic_replay"])
     p.add_argument("--score-gate", type=int, default=60)
     p.add_argument("--rr", type=float, default=1.5)
     p.add_argument("--sl-atr", type=float, default=1.2)

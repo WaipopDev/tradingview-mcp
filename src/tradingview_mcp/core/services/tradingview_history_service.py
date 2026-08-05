@@ -270,7 +270,10 @@ class _SimpleWebSocket:
 def fetch_tradingview_candles(symbol: str, exchange: str = "OANDA", timeframe: str = "15m", bars: int = 500, timeout: float = 30.0) -> list[HistoricalCandle]:
     if timeframe not in _TF_MAP:
         raise ValueError(f"Unsupported timeframe {timeframe!r}; choose {sorted(_TF_MAP)}")
-    bars = max(1, min(int(bars), 5000))
+    # TradingView commonly supports several thousand bars via create_series.
+    # Keep a hard safety cap to avoid accidental abuse, but allow 4-week 5m
+    # XAUUSD collection (≈8064 bars) for local replay backtests.
+    bars = max(1, min(int(bars), 10000))
     chart_session = _session("cs")
     quote_session = _session("qs")
     ws = _SimpleWebSocket(timeout=timeout)

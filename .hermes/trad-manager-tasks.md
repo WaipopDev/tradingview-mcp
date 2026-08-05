@@ -28,6 +28,7 @@ Last autonomous review: 2026-08-05 08:18 ICT
 - [ ] Intake pending: no approved backend task yet.
 
 ### Data
+- [ ] Phase 2C approved 2026-08-05: replay approximate current live Telegram entry logic over historical candles using `live_logic_replay`; evaluate score gate, duplicate guard, session, setup_type, ATR SL/RR TP before modifying live logic.
 - [ ] Phase 2B approved 2026-08-05: run DB-backed historical candle backtests from `historical_candles`, store `backtest_runs`/`backtest_trades`, start with `ema_trend` and `bollinger_rejection` strategy families.
 - [ ] Phase 2A approved 2026-08-05: collect TradingView historical XAUUSD/OANDA candles into DB (`historical_candles`, `historical_fetch_runs`) for later backtesting; start with 5m/15m/1h.
 - [ ] Phase 1B approved 2026-08-05: persist analytics fields on new alerts only — `order_score`/`setup_score`, `setup_type`, `session_label`, and metadata JSON; do not change trading logic.
@@ -69,6 +70,12 @@ Last autonomous review: 2026-08-05 08:18 ICT
   - Strategies: `ema_trend`, `bollinger_rejection` with score gate, ATR SL, RR TP, max-hold bars.
   - Verification: targeted tests passed; real DB runs stored run #1 (5m ema_trend: 1 trade, WR 100%, ExpR 1.20) and run #2 (15m bollinger_rejection: 5 trades, WR 40%, ExpR -0.12).
   - Constraint: Phase 2B tests strategy families; exact live Telegram order-logic replay remains Phase 2C.
+
+- [ ] 2026-08-05: Phase 2C Historical Live-Logic Replay approved by Waipop; implemented and verified.
+  - Data expansion: collected 4-week target candles; DB now has 5m=6162 bars (~30.3 calendar days), 15m=2688 bars (~41.4 days), 1h=2688 bars (~166 days; more than requested, useful as MTF context).
+  - Logic: `live_logic_replay` approximates current Telegram entry gates using EMA/RSI/Bollinger rejection/continuation, score gate, RSI hot/cold guard, and 45m duplicate-zone guard; no live trading side effects.
+  - Verification: score_gate 70 run #3 produced 778 trades, WR 36.5%, ExpR -0.07; score_gate 85 run #4 produced 185 trades, WR 34.1%, ExpR -0.15, max loss streak 9.
+  - MGT finding: current approximate rejection-heavy replay is negative expectancy over the stored sample; do not loosen live entry rules. Next optimization should test stricter MTF/session filters before changing production alerts.
 
 ## Proposed / awaiting Waipop approval
 
