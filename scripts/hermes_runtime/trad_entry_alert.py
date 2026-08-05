@@ -114,6 +114,7 @@ MAX_SL_POINTS = 800
 POINTS_PER_PRICE_UNIT = 100
 MIN_SL_DISTANCE = MIN_SL_POINTS / POINTS_PER_PRICE_UNIT
 MAX_SL_DISTANCE = MAX_SL_POINTS / POINTS_PER_PRICE_UNIT
+MIN_ENTRY_SCORE = 70
 
 
 def clamp_sl(direction: str, entry_low: float, entry_high: float, sl: float) -> float:
@@ -246,27 +247,26 @@ def already_sent(con: sqlite3.Connection, symbol: str, timeframe: str, fp: str, 
     ).fetchone() is not None
 
 
-def confirmation_skip_reason(order: dict[str, Any]) -> str | None:
-    """Do not trade WAIT_CONFIRMATION unless price has confirmed beyond the zone."""
-    raw_bias = str(order.get("raw_bias") or "")
+def global_entry_floor_reason(order: dict[str, Any]) -> str | None:
+    """Hard floor for all deterministic Telegram entry alerts."""
     decision = str(order.get("decision") or "")
-    if raw_bias != "WAIT" and decision == "TRADE":
+    score = int(order.get("score") or 0)
+    if decision == "TRADE" and score >= MIN_ENTRY_SCORE:
         return None
-    price = float(order["price"])
-    if order["direction"] == "BUY":
-        confirmed = price > float(order["entry_high"])
-        level = order["entry_high"]
-        side = "เหนือ"
-    else:
-        confirmed = price < float(order["entry_low"])
-        level = order["entry_low"]
-        side = "ต่ำกว่า"
-    if confirmed and int(order.get("score") or 0) >= 85:
-        return None
+    if decision != "TRADE":
+        return (
+            f"งดส่ง {order['direction']}: ต้องเป็น decision=TRADE ก่อนส่ง auto-entry; "
+            f"ตอนนี้ {decision or '-'} score {score}/100"
+        )
     return (
-        f"งดส่ง {order['direction']}: signal ยังเป็น {decision or raw_bias}; "
-        f"รอราคา confirm {side} {fmt(level)} และ score >=85"
+        f"งดส่ง {order['direction']}: score {score}/100 ต่ำกว่า hard floor {MIN_ENTRY_SCORE} "
+        "สำหรับ auto-entry"
     )
+
+
+def confirmation_skip_reason(order: dict[str, Any]) -> str | None:
+    """Legacy strong-confirmation guard; global floor now blocks non-TRADE first."""
+    return global_entry_floor_reason(order)
 
 
 def recent_similar_zone_reason(con: sqlite3.Connection, order: dict[str, Any]) -> str | None:
@@ -472,9 +472,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         order, fp = derive_order(row)
         skip_reason = (
-            open_duplicate_reason(con, order)
+            global_entry_floor_reason(order)
+            or open_duplicate_reason(con, order)
             or recent_similar_zone_reason(con, order)
-            or confirmation_skip_reason(order)
             or adaptive_skip_reason(con, order)
         )
         if skip_reason:

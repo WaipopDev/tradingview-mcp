@@ -2,7 +2,7 @@
 
 Owner: MGT (Trad Manager Agent)
 Scope: MGT supervises Trad, Dashboard, Backend, Data, DevOps, and Other tasks. Primary repo/runtime paths: /Users/waipop/MainWTN/Hermes/trad and local runtime scripts under /Users/waipop/.hermes/scripts
-Last autonomous review: 2026-08-05 01:19 ICT
+Last autonomous review: 2026-08-05 08:18 ICT
 
 ## Workflow
 1. Waipop talks to Manager as the control point.
@@ -38,7 +38,7 @@ Last autonomous review: 2026-08-05 01:19 ICT
 
 ## Proposed / awaiting Waipop approval
 
-- None currently.
+- None.
 
 ## Completed / verified
 - 2026-08-05: Established Manager/Analyst workflow and task-list policy.
@@ -47,3 +47,4 @@ Last autonomous review: 2026-08-05 01:19 ICT
 - 2026-08-05: Manager Agent prompt updated to stay silent on routine no-risk/no-open-order status and report only material changes or approval requests.
 - 2026-08-05: MGT scope expanded to accept/categorize Dashboard, Backend, Data, DevOps, and Other department tasks.
 - 2026-08-05: Approved Trad proposals completed locally: tighter 45m duplicate-zone guard, 90m post-SL/CUT pause requiring TRADE+score>=85, and normalized management-alert cooldown to reduce PROTECT/MOVE_SL_BE spam.
+- 2026-08-05 08:21 ICT: Waipop approved hard global auto-entry floor; deterministic Telegram entry alerts now require `decision=TRADE` and script/order score >=70 before sending.
