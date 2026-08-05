@@ -32,6 +32,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--db-path", default=None)
     p.add_argument("--no-store", action="store_true")
+    p.add_argument("--allowed-sessions", default=None, help="Comma-separated sessions, e.g. Asia,London")
+    p.add_argument("--allowed-directions", default=None, help="Comma-separated BUY/SELL")
+    p.add_argument("--allowed-setups", default=None, help="Comma-separated setup_type values")
+    p.add_argument("--mtf-filter", default="off", choices=["off", "with_trend", "strict_with_trend", "rejection_countertrend_only"])
+    p.add_argument("--mtf-timeframe", default="1h")
     p.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
 
@@ -47,6 +52,11 @@ def main(argv: list[str] | None = None) -> int:
         max_hold_bars=args.max_hold_bars,
         limit=args.limit,
         store=not args.no_store,
+        allowed_sessions=args.allowed_sessions,
+        allowed_directions=args.allowed_directions,
+        allowed_setups=args.allowed_setups,
+        mtf_filter=args.mtf_filter,
+        mtf_timeframe=args.mtf_timeframe,
     )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))

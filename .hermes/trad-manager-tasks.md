@@ -28,6 +28,7 @@ Last autonomous review: 2026-08-05 08:18 ICT
 - [ ] Intake pending: no approved backend task yet.
 
 ### Data
+- [ ] Phase 2D approved 2026-08-05: optimize live_logic_replay with evidence-only filters (session, direction, setup, 1h MTF trend alignment) and store best candidates before any production logic change.
 - [ ] Phase 2C approved 2026-08-05: replay approximate current live Telegram entry logic over historical candles using `live_logic_replay`; evaluate score gate, duplicate guard, session, setup_type, ATR SL/RR TP before modifying live logic.
 - [ ] Phase 2B approved 2026-08-05: run DB-backed historical candle backtests from `historical_candles`, store `backtest_runs`/`backtest_trades`, start with `ema_trend` and `bollinger_rejection` strategy families.
 - [ ] Phase 2A approved 2026-08-05: collect TradingView historical XAUUSD/OANDA candles into DB (`historical_candles`, `historical_fetch_runs`) for later backtesting; start with 5m/15m/1h.
@@ -76,6 +77,14 @@ Last autonomous review: 2026-08-05 08:18 ICT
   - Logic: `live_logic_replay` approximates current Telegram entry gates using EMA/RSI/Bollinger rejection/continuation, score gate, RSI hot/cold guard, and 45m duplicate-zone guard; no live trading side effects.
   - Verification: score_gate 70 run #3 produced 778 trades, WR 36.5%, ExpR -0.07; score_gate 85 run #4 produced 185 trades, WR 34.1%, ExpR -0.15, max loss streak 9.
   - MGT finding: current approximate rejection-heavy replay is negative expectancy over the stored sample; do not loosen live entry rules. Next optimization should test stricter MTF/session filters before changing production alerts.
+
+- [ ] 2026-08-05: Phase 2D Filter Optimization approved by Waipop; implemented and verified.
+  - Scope: evidence-only filter experiments for `live_logic_replay`; no production entry/order logic changed.
+  - Added controls: `allowed_sessions`, `allowed_directions`, `allowed_setups`, `mtf_filter` (`off`, `with_trend`, `strict_with_trend`, `rejection_countertrend_only`) and 1h EMA20/EMA50 MTF alignment.
+  - Optimizer: `scripts/optimize_live_logic_filters.py` tested 588 combinations on the 4-week-ish DB sample.
+  - High-confidence candidate (min 100 trades, stored run #6): SELL only, sessions Asia+NY/late signal filter, 1h with-trend, score_gate 70; 162 trades, WR 39.5%, ExpR +0.07, avg MFE 7.20, avg MAE 7.29, max loss streak 6.
+  - Small-sample candidate (stored run #5): SELL rejection only, Asia+NY/late, 1h with-trend, 23 trades, WR 47.8%, ExpR +0.18, max loss streak 4; promising but needs more data before production.
+  - MGT finding: filters can turn replay positive, but margin is small; propose paper-mode/shadow validation and exact production-logic replay before changing Telegram alerts.
 
 ## Proposed / awaiting Waipop approval
 

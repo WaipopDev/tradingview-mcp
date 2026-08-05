@@ -77,6 +77,30 @@ def test_live_logic_replay_produces_trades_without_live_side_effects(tmp_path):
     con = sqlite3.connect(db_path)
     assert con.execute("select count(*) from backtest_runs where strategy='live_logic_replay'").fetchone()[0] == 1
 
+
+def test_live_logic_replay_accepts_phase_2d_filters(tmp_path):
+    db_path = tmp_path / "signals.sqlite3"
+    ensure_history_schema(db_path)
+    prices = [4000.0 + i * 0.08 + math.sin(i / 3) * 2.5 for i in range(180)]
+    candles = [_candle(i, p) for i, p in enumerate(prices)]
+    store_historical_candles(candles, db_path)
+
+    result = run_db_backtest(
+        symbol="XAUUSD",
+        exchange="OANDA",
+        timeframe="5m",
+        strategy="live_logic_replay",
+        score_gate=60,
+        allowed_sessions="Asia,London",
+        allowed_directions="BUY",
+        mtf_filter="off",
+        db_path=db_path,
+    )
+
+    assert "error" not in result
+    assert result["params"]["allowed_sessions"] == ["Asia", "London"]
+    assert result["params"]["allowed_directions"] == ["BUY"]
+
     import sqlite3
 
     con = sqlite3.connect(db_path)

@@ -129,6 +129,47 @@ def load_candles(symbol: str, exchange: str, timeframe: str, db_path: PathLike |
     return [Candle(ts=int(r["ts"]), datetime_utc=str(r["datetime_utc"]), open=float(r["open"]), high=float(r["high"]), low=float(r["low"]), close=float(r["close"]), volume=None if r["volume"] is None else float(r["volume"])) for r in rows]
 
 
+def _csv_set(value: str | Iterable[str] | None) -> set[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.split(",")]
+    else:
+        parts = [str(p).strip() for p in value]
+    out = {p for p in parts if p}
+    return out or None
+
+
+def _mtf_direction_map(candles: list[Candle], higher: list[Candle]) -> dict[int, str]:
+    """Map each base candle timestamp to latest higher-timeframe EMA trend."""
+    if len(higher) < 60:
+        return {}
+    closes = [c.close for c in higher]
+    ema20 = calc_ema(closes, 20)
+    ema50 = calc_ema(closes, 50)
+    higher_dirs: list[tuple[int, str]] = []
+    for i, c in enumerate(higher):
+        e20, e50 = ema20[i], ema50[i]
+        if e20 is None or e50 is None:
+            direction = "RANGE"
+        elif e20 > e50:
+            direction = "BUY"
+        elif e20 < e50:
+            direction = "SELL"
+        else:
+            direction = "RANGE"
+        higher_dirs.append((c.ts, direction))
+    mapping: dict[int, str] = {}
+    j = 0
+    current = "RANGE"
+    for c in candles:
+        while j < len(higher_dirs) and higher_dirs[j][0] <= c.ts:
+            current = higher_dirs[j][1]
+            j += 1
+        mapping[c.ts] = current
+    return mapping
+
+
 def _risk(entry: float, sl: float) -> float:
     return max(0.01, abs(entry - sl))
 
@@ -152,7 +193,15 @@ def _score_trade(direction: str, rsi: float | None, ema20: float | None, ema50: 
     return max(0, min(100, score))
 
 
-def _candidate_live_logic_replay(candles: list[Candle], score_gate: int) -> list[dict[str, Any]]:
+def _candidate_live_logic_replay(
+    candles: list[Candle],
+    score_gate: int,
+    allowed_sessions: set[str] | None = None,
+    allowed_directions: set[str] | None = None,
+    allowed_setups: set[str] | None = None,
+    mtf_direction_by_ts: Mapping[int, str] | None = None,
+    mtf_filter: str = "off",
+) -> list[dict[str, Any]]:
     """Approximate current Telegram entry gate over historical candles.
 
     Mirrors the important live guards rather than every integration detail:
@@ -202,6 +251,21 @@ def _candidate_live_logic_replay(candles: list[Candle], score_gate: int) -> list
             setup_type = "live_logic/SELL_rejection"
         if direction is None:
             continue
+        candle_session = session_label(c.datetime_utc)
+        if allowed_sessions and candle_session not in allowed_sessions:
+            continue
+        if allowed_directions and direction not in allowed_directions:
+            continue
+        if allowed_setups and setup_type not in allowed_setups:
+            continue
+        if mtf_filter != "off" and mtf_direction_by_ts:
+            mtf_dir = mtf_direction_by_ts.get(c.ts, "RANGE")
+            if mtf_filter == "with_trend" and mtf_dir in {"BUY", "SELL"} and mtf_dir != direction:
+                continue
+            if mtf_filter == "strict_with_trend" and mtf_dir != direction:
+                continue
+            if mtf_filter == "rejection_countertrend_only" and "rejection" in setup_type and mtf_dir == direction:
+                continue
         if direction == "BUY" and rsi_i >= 70:
             continue
         if direction == "SELL" and rsi_i <= 30:
@@ -241,13 +305,23 @@ def _candidate_live_logic_replay(candles: list[Candle], score_gate: int) -> list
             "ema50": ema50_i,
             "zone_low": zone_low,
             "zone_high": zone_high,
+            "mtf_direction": mtf_direction_by_ts.get(c.ts, "RANGE") if mtf_direction_by_ts else "off",
         })
     return signals
 
 
-def _candidate_signals(candles: list[Candle], strategy: str, score_gate: int) -> list[dict[str, Any]]:
+def _candidate_signals(
+    candles: list[Candle],
+    strategy: str,
+    score_gate: int,
+    allowed_sessions: set[str] | None = None,
+    allowed_directions: set[str] | None = None,
+    allowed_setups: set[str] | None = None,
+    mtf_direction_by_ts: Mapping[int, str] | None = None,
+    mtf_filter: str = "off",
+) -> list[dict[str, Any]]:
     if strategy == "live_logic_replay":
-        return _candidate_live_logic_replay(candles, score_gate)
+        return _candidate_live_logic_replay(candles, score_gate, allowed_sessions, allowed_directions, allowed_setups, mtf_direction_by_ts, mtf_filter)
     closes = [c.close for c in candles]
     highs = [c.high for c in candles]
     lows = [c.low for c in candles]
@@ -361,7 +435,7 @@ def _simulate_trade(candles: list[Candle], signal: Mapping[str, Any], rr: float,
         "mfe": mfe,
         "mae": mae,
         "hold_bars": hold,
-        "metadata": {k: signal.get(k) for k in ["score", "rsi", "atr", "ema20", "ema50"]},
+        "metadata": {k: signal.get(k) for k in ["score", "rsi", "atr", "ema20", "ema50", "mtf_direction", "zone_low", "zone_high"]},
     }
 
 
@@ -401,6 +475,11 @@ def run_db_backtest(
     max_hold_bars: int = 12,
     limit: int | None = None,
     store: bool = True,
+    allowed_sessions: str | Iterable[str] | None = None,
+    allowed_directions: str | Iterable[str] | None = None,
+    allowed_setups: str | Iterable[str] | None = None,
+    mtf_filter: str = "off",
+    mtf_timeframe: str = "1h",
 ) -> dict[str, Any]:
     strategy = strategy.lower().strip()
     if strategy not in _VALID_STRATEGIES:
@@ -409,10 +488,33 @@ def run_db_backtest(
     candles = load_candles(symbol, exchange, timeframe, db_path, limit)
     if len(candles) < 60:
         return {"error": f"Not enough candles ({len(candles)}); collect at least 60 bars first."}
-    signals = _candidate_signals(candles, strategy, int(score_gate))
+    session_filter = _csv_set(allowed_sessions)
+    direction_filter = _csv_set(allowed_directions)
+    setup_filter = _csv_set(allowed_setups)
+    mtf_filter = (mtf_filter or "off").strip()
+    if mtf_filter not in {"off", "with_trend", "strict_with_trend", "rejection_countertrend_only"}:
+        return {"error": "Unknown mtf_filter; choose off, with_trend, strict_with_trend, rejection_countertrend_only"}
+    mtf_map: dict[int, str] | None = None
+    if mtf_filter != "off":
+        higher = load_candles(symbol, exchange, mtf_timeframe, db_path, None)
+        mtf_map = _mtf_direction_map(candles, higher)
+        if not mtf_map:
+            return {"error": f"Not enough {mtf_timeframe} candles for mtf_filter={mtf_filter}"}
+    signals = _candidate_signals(candles, strategy, int(score_gate), session_filter, direction_filter, setup_filter, mtf_map, mtf_filter)
     trades = [t for s in signals if (t := _simulate_trade(candles, s, float(rr), float(sl_atr), int(max_hold_bars))) is not None]
     summary = summarize_trades(trades)
-    params = {"score_gate": int(score_gate), "rr": float(rr), "sl_atr": float(sl_atr), "max_hold_bars": int(max_hold_bars), "limit": limit}
+    params = {
+        "score_gate": int(score_gate),
+        "rr": float(rr),
+        "sl_atr": float(sl_atr),
+        "max_hold_bars": int(max_hold_bars),
+        "limit": limit,
+        "allowed_sessions": sorted(session_filter) if session_filter else None,
+        "allowed_directions": sorted(direction_filter) if direction_filter else None,
+        "allowed_setups": sorted(setup_filter) if setup_filter else None,
+        "mtf_filter": mtf_filter,
+        "mtf_timeframe": mtf_timeframe,
+    }
     result = {
         "symbol": symbol.upper(),
         "exchange": exchange.upper(),
