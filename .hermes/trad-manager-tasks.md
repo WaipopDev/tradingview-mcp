@@ -28,6 +28,7 @@ Last autonomous review: 2026-08-05 08:18 ICT
 - [ ] Intake pending: no approved backend task yet.
 
 ### Data
+- [ ] Phase 2A approved 2026-08-05: collect TradingView historical XAUUSD/OANDA candles into DB (`historical_candles`, `historical_fetch_runs`) for later backtesting; start with 5m/15m/1h.
 - [ ] Phase 1B approved 2026-08-05: persist analytics fields on new alerts only — `order_score`/`setup_score`, `setup_type`, `session_label`, and metadata JSON; do not change trading logic.
 - [ ] Phase 1 approved 2026-08-05: build/generate Analyst evidence report from DB: session, direction, setup type, score band, MFE/MAE, expectancy/R, duplicate-zone behavior, and stale-data impact.
 - [ ] Monitor `trade_signals`, `market_snapshots`, `trade_plan_outcomes`, and evaluation metrics.
@@ -53,6 +54,13 @@ Last autonomous review: 2026-08-05 08:18 ICT
   - Scope: persist analytics fields for new Order/Scalp Watch alerts only: `order_score`/`setup_score`, `setup_type`, `session_label`, and metadata JSON.
   - Constraint: no trading logic/threshold changes in Phase 1B; evidence only.
   - Verification: runtime scripts compile, DB columns exist, dry-runs did not send alerts, and Phase 1 report shows field coverage (historical coverage remains 0 until new alerts close).
+
+- [ ] 2026-08-05: Phase 2A Historical TradingView Candle Storage approved by Waipop; implemented and verified.
+  - Scope: DB schema + collector for OANDA:XAUUSD historical candles in 5m/15m/1h.
+  - Tables: `historical_candles`, `historical_fetch_runs`.
+  - Collector: `scripts/collect_tradingview_history.py` using TradingView chart websocket.
+  - Verification: collected 100 bars each for 5m/15m/1h into `/Users/waipop/.tradingview-mcp/trading_signals.sqlite3`; targeted tests passed.
+  - Constraint: Phase 2A stores candles only; backtest engine/logic replay is Phase 2B.
 
 ## Proposed / awaiting Waipop approval
 

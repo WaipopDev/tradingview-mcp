@@ -135,6 +135,41 @@ CREATE TABLE IF NOT EXISTS ai_signal_alert_deliveries (
 
 CREATE INDEX IF NOT EXISTS idx_ai_signal_alert_deliveries_lookup
 ON ai_signal_alert_deliveries(symbol, timeframe, signal_fingerprint, target);
+
+CREATE TABLE IF NOT EXISTS historical_candles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  exchange TEXT NOT NULL,
+  timeframe TEXT NOT NULL,
+  ts INTEGER NOT NULL,
+  datetime_utc TEXT NOT NULL,
+  open REAL NOT NULL,
+  high REAL NOT NULL,
+  low REAL NOT NULL,
+  close REAL NOT NULL,
+  volume REAL,
+  source TEXT NOT NULL DEFAULT 'TradingView chart websocket',
+  fetched_at TEXT NOT NULL,
+  raw_json TEXT,
+  UNIQUE(symbol, exchange, timeframe, ts)
+);
+
+CREATE INDEX IF NOT EXISTS idx_historical_candles_lookup
+ON historical_candles(symbol, exchange, timeframe, ts);
+
+CREATE TABLE IF NOT EXISTS historical_fetch_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  exchange TEXT NOT NULL,
+  timeframe TEXT NOT NULL,
+  requested_bars INTEGER NOT NULL,
+  stored_bars INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  status TEXT NOT NULL,
+  error TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT NOT NULL
+);
 """
 
 POST_SCHEMA_COLUMNS = {
