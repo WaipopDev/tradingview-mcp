@@ -28,13 +28,31 @@ Last autonomous review: 2026-08-05 08:18 ICT
 - [ ] Intake pending: no approved backend task yet.
 
 ### Data
-- [ ] Intake pending: monitor `trade_signals`, `market_snapshots`, `trade_plan_outcomes`, and evaluation metrics.
+- [ ] Phase 1B approved 2026-08-05: persist analytics fields on new alerts only — `order_score`/`setup_score`, `setup_type`, `session_label`, and metadata JSON; do not change trading logic.
+- [ ] Phase 1 approved 2026-08-05: build/generate Analyst evidence report from DB: session, direction, setup type, score band, MFE/MAE, expectancy/R, duplicate-zone behavior, and stale-data impact.
+- [ ] Monitor `trade_signals`, `market_snapshots`, `trade_plan_outcomes`, and evaluation metrics.
 
 ### DevOps
-- [ ] Intake pending: monitor cron/runtime reliability and commit/push hygiene.
+- [ ] Phase 1 approved 2026-08-05: keep Analyst low-token/local; do not spam Telegram; only resume cron after report path is verified.
+- [ ] Monitor cron/runtime reliability and commit/push hygiene.
 
 ### Other
 - [ ] Intake pending: classify new work before execution.
+
+## Approved / active work
+
+- [ ] 2026-08-05: Phase 1 Data Analytics for MGT/Analyst approved by Waipop; first evidence report generated and verified.
+  - Data: add/generate Analyst report metrics by session (Asia/London/NY/overlap), direction (BUY/SELL), setup type (rejection/breakout/continuation/pullback/scalp-watch), score band, MFE/MAE, expectancy/R, duplicate-zone behavior, and stale-data impact.
+  - Report script: `/Users/waipop/.hermes/scripts/trad_phase1_analytics_report.py`
+  - Latest report: `/Users/waipop/MainWTN/Hermes/trad/.hermes/phase1-analytics-report.md`
+  - Next proposed improvement (needs Waipop approval before trading-logic/data-schema changes): persist `order_score`/`setup_score` and explicit `setup_type` when creating Order/Scalp Watch.
+  - MGT: summarize findings in concise Thai only when material; do not auto-patch trading logic without Waipop approval.
+  - DevOps: keep Analyst low-token/local and no Telegram spam; resume cron only if Waipop wants periodic report runs.
+
+- [ ] 2026-08-05: Phase 1B Data Capture approved by Waipop; implemented and verified locally.
+  - Scope: persist analytics fields for new Order/Scalp Watch alerts only: `order_score`/`setup_score`, `setup_type`, `session_label`, and metadata JSON.
+  - Constraint: no trading logic/threshold changes in Phase 1B; evidence only.
+  - Verification: runtime scripts compile, DB columns exist, dry-runs did not send alerts, and Phase 1 report shows field coverage (historical coverage remains 0 until new alerts close).
 
 ## Proposed / awaiting Waipop approval
 

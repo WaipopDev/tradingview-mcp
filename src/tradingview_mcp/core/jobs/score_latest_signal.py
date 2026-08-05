@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from tradingview_mcp.core.storage.database import PathLike, connect_database
@@ -53,6 +54,11 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _created_at(summary: Mapping[str, Any]) -> str:
+    value = summary.get("created_at")
+    return str(value) if value else datetime.now(timezone.utc).isoformat()
+
+
 def _store_market_snapshot(summary: Mapping[str, Any], db_path: PathLike | None = None) -> None:
     """Backfill market_snapshots from compact technical payload for dashboard/manager reads."""
     technical = summary.get("technical") or {}
@@ -69,6 +75,7 @@ def _store_market_snapshot(summary: Mapping[str, Any], db_path: PathLike | None 
     macd: Mapping[str, Any] = macd_raw if isinstance(macd_raw, Mapping) else {}
     ema: Mapping[str, Any] = ema_raw if isinstance(ema_raw, Mapping) else {}
     raw_json = json.dumps(technical, ensure_ascii=False)
+    created_at = _created_at(summary)
     record = {
         "symbol": str(summary.get("symbol") or "XAUUSD").upper(),
         "exchange": summary.get("exchange") or "OANDA",
@@ -87,7 +94,7 @@ def _store_market_snapshot(summary: Mapping[str, Any], db_path: PathLike | None 
         "ema200": _to_float(ema.get("ema200") or _nested(technical, "moving_averages", "ema200")),
         "macd": _to_float(macd.get("macd") or macd.get("value")),
         "raw_json": raw_json,
-        "created_at": summary.get("created_at"),
+        "created_at": created_at,
     }
     with connect_database(db_path) as conn:
         conn.execute(
@@ -110,6 +117,7 @@ def store_compact_trade_signal(summary: Mapping[str, Any], db_path: PathLike | N
     plan = summary.get("plan") or {}
     tp_values = list(plan.get("tp") or []) if isinstance(plan, Mapping) else []
     entry_low, entry_high = _parse_entry_zone(plan.get("entry_zone") if isinstance(plan, Mapping) else None)
+    created_at = _created_at(summary)
 
     record = {
         "symbol": str(summary.get("symbol") or "XAUUSD").upper(),
@@ -136,7 +144,7 @@ def store_compact_trade_signal(summary: Mapping[str, Any], db_path: PathLike | N
         "score_breakdown_json": _json_dump(summary.get("score_breakdown")),
         "reason_codes_json": _json_dump(summary.get("reason_codes")),
         "ai_gate_json": _json_dump(summary.get("ai_gate")),
-        "created_at": summary.get("created_at"),
+        "created_at": created_at,
     }
 
     repo = TradeSignalRepository(db_path)
