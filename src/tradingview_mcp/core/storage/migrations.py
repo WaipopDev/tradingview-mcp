@@ -170,6 +170,61 @@ CREATE TABLE IF NOT EXISTS historical_fetch_runs (
   started_at TEXT NOT NULL,
   finished_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS backtest_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  exchange TEXT NOT NULL,
+  timeframe TEXT NOT NULL,
+  strategy TEXT NOT NULL,
+  params_json TEXT,
+  candle_count INTEGER NOT NULL,
+  date_from TEXT,
+  date_to TEXT,
+  total_trades INTEGER NOT NULL,
+  wins INTEGER NOT NULL,
+  losses INTEGER NOT NULL,
+  win_rate REAL NOT NULL,
+  expectancy_r REAL NOT NULL,
+  avg_mfe REAL NOT NULL,
+  avg_mae REAL NOT NULL,
+  max_loss_streak INTEGER NOT NULL,
+  summary_json TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_lookup
+ON backtest_runs(symbol, exchange, timeframe, strategy, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS backtest_trades (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER NOT NULL,
+  symbol TEXT NOT NULL,
+  exchange TEXT NOT NULL,
+  timeframe TEXT NOT NULL,
+  strategy TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK(direction IN ('BUY','SELL')),
+  setup_type TEXT,
+  session_label TEXT,
+  entry_ts INTEGER NOT NULL,
+  entry_time TEXT NOT NULL,
+  entry_price REAL NOT NULL,
+  sl REAL NOT NULL,
+  tp REAL NOT NULL,
+  exit_ts INTEGER,
+  exit_time TEXT,
+  exit_price REAL,
+  result TEXT NOT NULL,
+  r_multiple REAL NOT NULL,
+  mfe REAL NOT NULL,
+  mae REAL NOT NULL,
+  hold_bars INTEGER NOT NULL,
+  metadata_json TEXT,
+  FOREIGN KEY(run_id) REFERENCES backtest_runs(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_backtest_trades_run
+ON backtest_trades(run_id, entry_ts);
 """
 
 POST_SCHEMA_COLUMNS = {

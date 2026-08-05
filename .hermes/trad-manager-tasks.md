@@ -28,6 +28,7 @@ Last autonomous review: 2026-08-05 08:18 ICT
 - [ ] Intake pending: no approved backend task yet.
 
 ### Data
+- [ ] Phase 2B approved 2026-08-05: run DB-backed historical candle backtests from `historical_candles`, store `backtest_runs`/`backtest_trades`, start with `ema_trend` and `bollinger_rejection` strategy families.
 - [ ] Phase 2A approved 2026-08-05: collect TradingView historical XAUUSD/OANDA candles into DB (`historical_candles`, `historical_fetch_runs`) for later backtesting; start with 5m/15m/1h.
 - [ ] Phase 1B approved 2026-08-05: persist analytics fields on new alerts only — `order_score`/`setup_score`, `setup_type`, `session_label`, and metadata JSON; do not change trading logic.
 - [ ] Phase 1 approved 2026-08-05: build/generate Analyst evidence report from DB: session, direction, setup type, score band, MFE/MAE, expectancy/R, duplicate-zone behavior, and stale-data impact.
@@ -62,11 +63,19 @@ Last autonomous review: 2026-08-05 08:18 ICT
   - Verification: collected 100 bars each for 5m/15m/1h into `/Users/waipop/.tradingview-mcp/trading_signals.sqlite3`; targeted tests passed.
   - Constraint: Phase 2A stores candles only; backtest engine/logic replay is Phase 2B.
 
+- [ ] 2026-08-05: Phase 2B Historical DB Backtest approved by Waipop; implemented and verified.
+  - Scope: read `historical_candles`, run deterministic strategy-family backtests, store `backtest_runs`/`backtest_trades`.
+  - CLI: `scripts/run_historical_backtest.py`.
+  - Strategies: `ema_trend`, `bollinger_rejection` with score gate, ATR SL, RR TP, max-hold bars.
+  - Verification: targeted tests passed; real DB runs stored run #1 (5m ema_trend: 1 trade, WR 100%, ExpR 1.20) and run #2 (15m bollinger_rejection: 5 trades, WR 40%, ExpR -0.12).
+  - Constraint: Phase 2B tests strategy families; exact live Telegram order-logic replay remains Phase 2C.
+
 ## Proposed / awaiting Waipop approval
 
 - None.
 
 ## Completed / verified
+- 2026-08-05: Approved MGT scalp improvement implemented: after same-zone Scalp Watch non-TP/CUT/SL, block repeated scalp alerts in that trigger band unless the new setup score is stronger (>=65 after BE/PARTIAL_BE, >=70 after repeated non-TP, >=75 after CUT/SL). Verified with dry-run guard for recent Scalp #41 CUT.
 - 2026-08-05: Established Manager/Analyst workflow and task-list policy.
 - 2026-08-05: Approved proposal implemented locally; repo side updated for market_snapshots persistence.
 - 2026-08-05: Checked DB tables and outcome summary; verified latest signal was WAIT_CONFIRMATION and no open orders at review time.
