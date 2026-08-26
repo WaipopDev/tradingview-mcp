@@ -2,7 +2,7 @@
 
 ## เป้าหมาย
 
-ตรวจว่า OCO Grid มี edge หลังรวม spread, commission, slippage และการเปิดหลาย position โดยไม่ประเมินจาก win rate เพียงอย่างเดียว
+ตรวจว่า Grid มี edge หลังรวม spread, commission, slippage และการเปิดหลาย position โดยให้ Basket Floating P/L เป็นทางออกหลัก และไม่ประเมินจาก win rate เพียงอย่างเดียว
 
 ## Environment
 
@@ -27,17 +27,14 @@
 ## Baseline
 
 ```text
-Mode: OCO
+Mode: HEDGE (ทดสอบ OCO แยกเป็น A/B)
 Lot: 0.01
 Levels: 5 ต่อฝั่ง
-Offset: 300 points
-Spacing: 300 points
-SL: 700 points
-TP: 1200 points
-Max positions: 10 (ครอบคลุม worst-case 5 BUY + 5 SELL บน Hedging)
-Max open lots: 0.10
-Partial trigger: 500 points
-BE trigger: 350 points
+Offset: 200 points
+Spacing: 200 points
+Per-order SL/TP: ปิดใช้งาน (ส่งค่า 0.0)
+Basket TP: 5.0 account currency
+Basket SL: 20.0 account currency
 ```
 
 ## A/B matrix
@@ -59,13 +56,11 @@ BE trigger: 350 points
 - 300 points
 - 500 points
 
-### Management
+### Exit calculation
 
-- No partial
-- Partial at 300
-- Partial at 500
-- BE trigger 300/350/500
-- Trailing 500/700/900
+- Basket TP/SL only
+- Restart immediately after Basket TP/SL เมื่อ cleanup จน flat สำเร็จ
+- ทดสอบ Basket TP/SL หลายระดับตามสกุลเงินบัญชี
 
 ### Session
 
@@ -83,7 +78,7 @@ BE trigger: 350 points
 - Max balance drawdown %
 - Recovery factor
 - Total trades
-- Full TP / SL / partial / BE counts
+- Basket TP / Basket SL counts
 - Max consecutive losses
 - Average margin level
 - Largest simultaneous exposure
@@ -108,9 +103,9 @@ Max loss streak อยู่ใน risk budget
 หยุดทดสอบ/ไม่อนุมัติเมื่อ:
 
 - Edge มาจากช่วงข้อมูลเดียว
-- HEDGE เปิดสองฝั่งจน exposure เกิน cap
+- HEDGE เปิดสองฝั่งจน margin usage เกินระดับที่ยอมรับ
 - OCO ลบ pending ไม่ทันใน fast market
-- Profit มาจาก partial bookkeeping แต่ ExpR ติดลบ
+- Profit มาจากการตั้ง Basket TP ต่ำเกินไป แต่ ExpR หลังหักต้นทุนติดลบ
 - Drawdown หรือ margin usage เกินเกณฑ์
 - Parameter เปลี่ยนเล็กน้อยแล้วผลพัง (overfit)
 

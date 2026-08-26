@@ -23,15 +23,12 @@ REQUIRED_INPUTS = {
     "InpFixedLot",
     "InpLevelsPerSide",
     "InpGridSpacingPoints",
-    "InpStopLossPoints",
-    "InpTakeProfitPoints",
-    "InpMaxOpenPositions",
-    "InpMaxOpenLots",
-    "InpMaxPendingLots",
+    "InpPendingExpiryHours",
     "InpBasketTakeProfitMoney",
+    "InpRestartImmediatelyAfterBasketTP",
     "InpBasketStopLossMoney",
-    "InpMaxDailyLossPercent",
-    "InpMaxEquityDrawdownPct",
+    "InpRestartImmediatelyAfterBasketSL",
+    "InpClearRiskLockOnInit",
     "InpMaxSpreadPoints",
     "InpMagic",
 }
@@ -42,21 +39,32 @@ REQUIRED_FUNCTIONS = {
     "OnTradeTransaction",
     "PlaceFreshGrid",
     "ManageRiskAndPositions",
-    "ManageBreakEvenPartialAndTrail",
     "CancelPendingType",
     "CloseAllPositions",
-    "EmergencyStop",
     "HasPositionType",
     "TradeResultAccepted",
 }
 
 REQUIRED_SAFETY_SNIPPETS = {
-    "potential_lots>InpMaxOpenLots": "worst-case open-lot cap",
     "TradeResultAccepted(close_sent,false,false,false)": "full-close retcode enforcement",
     'CloseAllPositions("persistent risk-lock enforcement")': "risk-lock liquidation retry",
     "g_cycle_active && g_exit_seen": "between-poll exit lifecycle tracking",
     'CancelAllPendings("restart orphan-safety reset")': "restart orphan cleanup",
-    "(g_risk_lock || stored_lock) && owned_exposure": "risk-lock rollover persistence",
+    "RestoreRiskLock": "persistent basket-lock restoration",
+    "ClearLegacyPerOrderExits": "migration clears legacy per-order SL/TP",
+    "g_basket_tp_closing": "basket TP retry-until-flat state",
+    "g_basket_sl_closing": "basket SL retry-until-flat state",
+    "0.0,0.0,time_type": "pending orders are created without per-order TP/SL",
+    "RestartAfterBasketSL": "configurable basket SL restart lifecycle",
+}
+
+REMOVED_CONTROLS = {
+    "InpMaxDailyLossPercent",
+    "InpMaxEquityDrawdownPct",
+    "ResetDailyBaseline",
+    "InpMaxOpenPositions",
+    "InpMaxOpenLots",
+    "InpMaxPendingLots",
 }
 
 
@@ -87,7 +95,12 @@ def main() -> int:
             raise AssertionError(f"Missing or empty artifact: {path}")
 
     source = EA.read_text(encoding="utf-8")
+    preset_text = PRESET.read_text(encoding="utf-8")
     assert_balanced(source)
+
+    for token in REMOVED_CONTROLS:
+        if token in source or token in preset_text:
+            raise AssertionError(f"Removed daily/equity control still present: {token}")
 
     inputs = set(re.findall(r"(?m)^input\s+\w+(?:\s+\w+)?\s+(Inp\w+)\s*=", source))
     missing_inputs = REQUIRED_INPUTS - inputs
@@ -103,11 +116,12 @@ def main() -> int:
         if snippet not in source:
             raise AssertionError(f"Missing safety invariant: {label}")
 
-    preset_keys = {
-        line.split("=", 1)[0].strip()
-        for line in PRESET.read_text(encoding="utf-8").splitlines()
+    preset_values = {
+        line.split("=", 1)[0].strip(): line.split("=", 1)[1].strip()
+        for line in preset_text.splitlines()
         if "=" in line and not line.lstrip().startswith("#")
     }
+    preset_keys = set(preset_values)
     missing_preset = REQUIRED_INPUTS - preset_keys
     if missing_preset:
         raise AssertionError(f"Preset missing safety inputs: {sorted(missing_preset)}")
@@ -121,6 +135,9 @@ def main() -> int:
     report = COMPILE_REPORT.read_text(encoding="utf-8")
     if "Result: 0 errors, 0 warnings" not in report:
         raise AssertionError("Compile report does not confirm a clean MetaEditor build")
+    source_digest = hashlib.sha256(EA.read_bytes()).hexdigest()
+    if f"Source SHA-256: {source_digest}" not in report:
+        raise AssertionError("EA source hash does not match compile report; EX5 may be stale")
     digest = hashlib.sha256(COMPILED.read_bytes()).hexdigest()
     if f"SHA-256: {digest}" not in report:
         raise AssertionError("Compiled EX5 hash does not match compile report")

@@ -2,23 +2,22 @@ SteevStyleGridEA MT5 compile report
 ===================================
 
 Compiler: MetaEditor 5 / X64 Regular
-Source: C:\MT5GridCompiler\MQL5\Experts\SteevStyleGridEA\SteevStyleGridEA.mq5
-Compiled: 2026-08-06 12:43:42 +07
+Source: C:\MT5Compiler\MQL5\Experts\SteevStyleGridEA\SteevStyleGridEA.mq5
+Compiled: 2026-08-07 (local macOS Wine compiler)
+Version: 1.04
 Result: 0 errors, 0 warnings
-Elapsed: 1686 ms
 Artifact: build/SteevStyleGridEA.ex5
-Artifact size: 59064 bytes
-SHA-256: 7ed782d37c61675cbb16823db41bc585fe5aa29e2f8cf425ea1b7ed30057b849
+Artifact size: 56044 bytes
+Source SHA-256: 026352d8682af4e6985d7802c6e25e6c24858799d008935c3602ed3493dfbf2f
+SHA-256: bf915a1511df6d09f555eaa9f889b529a6eadd991bcd5ab4c26a1b77e900047e
 
-Review fixes included in this build:
-- Worst-case pending exposure is validated against hard open-position/open-lot/pending-lot caps before grid placement.
-- CTrade requests require accepted ResultRetcode values before being counted as successful.
-- Full-position closes reject partial-fill retcodes and verify that the ticket no longer exists.
-- A persisted risk lock retries pending cancellation and position liquidation on every tick/timer.
-- An active persisted risk lock survives broker-day rollover while owned exposure remains; reset is permitted only after positions and pendings are both zero.
-- OCO reconciliation/retry runs on every tick/timer and after restart.
-- Entry/exit transactions track short-lived trade cycles so ordinary exits trigger flat cleanup and cooldown even between polls.
-- On restart, owned Pending orders without an owned Position are removed as an orphan-safety reset.
-- Pending expiry starts cooldown and retries pending cleanup.
-
-The current source, compiled EA, and demo preset were installed into the local portable MetaTrader 5 data directory.
+Changes included in this build:
+- Added GRID_REVERSAL (mode=2): one owned position plus one opposite pending order.
+- Shadow-safe defaults are now Reversal, one level, Basket SL 5.0, Magic 26080602, and prefix SGRID-R.
+- Initial reversal cycle places one BUY STOP and one SELL STOP; after entry, same-side pending is removed.
+- Reversal mode enforces at most one position; duplicate exposure is flattened before restart.
+- When the active position changes side, the EA ensures exactly one opposite pending order exists.
+- All pending orders remain without per-order TP/SL; Basket TP/SL remains the only exit calculation.
+- Existing GRID_OCO and GRID_HEDGE behavior remains available through inputs/presets.
+- Added runtime initialization logging for mode, lot, Basket TP, and Basket SL.
+- Separate presets/XAUUSD-Reversal-Shadow.set and Magic 26080602 are used for paper/shadow validation; the original live artifact was not overwritten.

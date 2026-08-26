@@ -4,71 +4,59 @@
 //| Shadow/demo validation first. No martingale.                     |
 //+------------------------------------------------------------------+
 #property copyright "WaipopDev"
-#property version   "1.00"
+#property version   "1.04"
 #property strict
-#property description "Pending-order breakout grid for MT5 with OCO, basket limits, BE, partial and trailing management."
+#property description "Pending-order grid with OCO, Hedge, and video-style one-position reversal; exits are calculated from basket floating P/L."
 
 #include <Trade/Trade.mqh>
 
 enum ENUM_GRID_MODE
   {
    GRID_OCO = 0,       // First side triggered -> delete opposite pending side
-   GRID_HEDGE = 1      // Keep both pending sides until another safety rule removes them
+   GRID_HEDGE = 1,     // Keep both pending sides until another safety rule removes them
+   GRID_REVERSAL = 2   // One position plus one opposite pending reversal
   };
 
 input group "Grid"
-input ENUM_GRID_MODE InpGridMode              = GRID_OCO;
-input double         InpFixedLot              = 0.01;
-input int            InpLevelsPerSide         = 5;
-input int            InpInitialOffsetPoints   = 300;
-input int            InpGridSpacingPoints     = 300;
-input int            InpPendingExpiryHours    = 4;
-input int            InpRecenterDistancePoints= 900;
-input int            InpCooldownMinutes       = 15;
+input ENUM_GRID_MODE InpGridMode              = GRID_REVERSAL; // โหมดกริด OCO/Hedge/Reversal
+input double         InpFixedLot              = 0.01;      // ล็อตต่อไม้
+input int            InpLevelsPerSide         = 1;         // จำนวนชั้นต่อฝั่ง (Reversal ใช้ 1)
+input int            InpInitialOffsetPoints   = 200;       // ระยะชั้นแรก points
+input int            InpGridSpacingPoints     = 200;       // ระยะห่างแต่ละชั้น points
+input int            InpPendingExpiryHours    = 4;         // อายุ pending ชั่วโมง
+input int            InpRecenterDistancePoints= 900;       // ระยะเลื่อนจุดกริดใหม่
 
-input group "Per-order protection"
-input int            InpStopLossPoints        = 700;
-input int            InpTakeProfitPoints      = 1200;
-input int            InpBreakEvenTriggerPoints= 350;
-input int            InpBreakEvenLockPoints   = 30;
-input bool           InpEnablePartialClose    = true;
-input int            InpPartialTriggerPoints  = 500;
-input double         InpPartialClosePercent   = 50.0;
-input int            InpTrailingStartPoints   = 700;
-input int            InpTrailingDistancePoints= 350;
+// ไม่มี TP/SL ต่อออเดอร์: EA คำนวณทางออกจาก Basket Floating P/L เท่านั้น
 
 input group "Account and basket safety"
-input int            InpMaxOpenPositions      = 10;
-input double         InpMaxOpenLots           = 0.10;
-input double         InpMaxPendingLots        = 0.10;
-input double         InpBasketTakeProfitMoney = 20.0;
-input double         InpBasketStopLossMoney   = 30.0;
-input double         InpMaxDailyLossPercent   = 2.0;
-input double         InpMaxEquityDrawdownPct  = 5.0;
+input double         InpBasketTakeProfitMoney = 5.0;       // กำไรรวมปิดทั้งหมด เหรียญ
+input bool           InpRestartImmediatelyAfterBasketTP = true; // ปิดกำไรแล้วเปิดใหม่ทันที
+input double         InpBasketStopLossMoney   = 5.0;       // ขาดทุนรวมปิดทั้งหมด เหรียญ
+input bool           InpRestartImmediatelyAfterBasketSL = true; // ปิดขาดทุนแล้วเปิดกริดใหม่ทันที
+input bool           InpClearRiskLockOnInit   = true;      // ล้าง persistent risk lock ตอนเปิด EA
 
 input group "Execution filters"
-input int            InpMaxSpreadPoints       = 80;
-input int            InpMaxSlippagePoints     = 30;
-input int            InpSessionStartHour      = 0;
-input int            InpSessionEndHour        = 24;
-input bool           InpCancelPendingsOutsideSession = true;
-input bool           InpCancelPendingsOnRemove       = false;
+input int            InpMaxSpreadPoints       = 80;        // spread สูงสุด points
+input int            InpMaxSlippagePoints     = 30;        // slippage สูงสุด points
+input int            InpSessionStartHour      = 0;         // เวลาเริ่มเทรด ชั่วโมง
+input int            InpSessionEndHour        = 24;        // เวลาหยุดเทรด ชั่วโมง
+input bool           InpCancelPendingsOutsideSession = true; // ลบ pending นอกเวลา
+input bool           InpCancelPendingsOnRemove       = false; // ถอด EA แล้วลบ pending
 
 input group "Identity"
-input long           InpMagic                 = 26080601;
-input string         InpOrderPrefix           = "SGRID";
+input long           InpMagic                 = 26080602;  // Magic number ของ Reversal Shadow
+input string         InpOrderPrefix           = "SGRID-R"; // prefix comment คำสั่ง Reversal
 
 CTrade   trade;
 double   g_anchor_price       = 0.0;
-double   g_start_equity       = 0.0;
-double   g_day_start_balance  = 0.0;
-int      g_day_key            = -1;
 datetime g_last_flat_time     = 0;
 bool     g_risk_lock          = false;
 int      g_previous_positions = 0;
 int      g_previous_pendings  = 0;
 bool     g_cycle_active       = false;
 bool     g_exit_seen          = false;
+bool     g_basket_tp_closing  = false;
+bool     g_basket_sl_closing  = false;
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -81,21 +69,21 @@ int OnInit()
    trade.SetTypeFillingBySymbol(_Symbol);
    trade.SetAsyncMode(false);
 
-   ResetDailyBaseline(true);
+   RestoreRiskLock();
+   ClearLegacyPerOrderExits();
    g_previous_positions=CountOurPositions();
    g_previous_pendings=CountOurPendings();
    g_cycle_active=(g_previous_positions>0);
    if(g_previous_positions==0 && g_previous_pendings>0)
      {
-      g_last_flat_time=TimeCurrent();
       CancelAllPendings("restart orphan-safety reset");
       g_previous_pendings=CountOurPendings();
      }
    EventSetTimer(5);
 
-   PrintFormat("%s initialized on %s. Mode=%s, levels=%d, lot=%.2f",
-               InpOrderPrefix,_Symbol,(InpGridMode==GRID_OCO ? "OCO" : "HEDGE"),
-               InpLevelsPerSide,InpFixedLot);
+   PrintFormat("%s initialized on %s. Mode=%s, levels=%d, lot=%.2f, basket_tp=%.2f, basket_sl=%.2f",
+               InpOrderPrefix,_Symbol,GridModeName(),
+               InpLevelsPerSide,InpFixedLot,InpBasketTakeProfitMoney,InpBasketStopLossMoney);
    return(INIT_SUCCEEDED);
   }
 
@@ -110,7 +98,6 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
   {
-   ResetDailyBaseline(false);
    ManageRiskAndPositions();
    MaintainGrid();
   }
@@ -118,7 +105,6 @@ void OnTick()
 //+------------------------------------------------------------------+
 void OnTimer()
   {
-   ResetDailyBaseline(false);
    ManageRiskAndPositions();
    MaintainGrid();
   }
@@ -153,6 +139,15 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
       else if(deal_type==DEAL_TYPE_SELL)
          CancelPendingType(ORDER_TYPE_BUY_STOP,"OCO SELL activated");
      }
+
+   if(is_entry && InpGridMode==GRID_REVERSAL)
+     {
+      // Keep only the opposite stop after a reversal entry.
+      if(deal_type==DEAL_TYPE_BUY)
+         CancelPendingType(ORDER_TYPE_BUY_STOP,"REVERSAL BUY activated");
+      else if(deal_type==DEAL_TYPE_SELL)
+         CancelPendingType(ORDER_TYPE_SELL_STOP,"REVERSAL SELL activated");
+     }
   }
 
 //+------------------------------------------------------------------+
@@ -163,102 +158,73 @@ bool ValidateInputs()
       Print("Invalid lot, levels, or spacing input.");
       return(false);
      }
-   if(InpStopLossPoints<=0 || InpTakeProfitPoints<=0)
-     {
-      Print("SL and TP points must be positive.");
-      return(false);
-     }
-   if(InpMaxOpenPositions<1 || InpMaxOpenLots<=0.0 || InpMaxPendingLots<=0.0)
-     {
-      Print("Position and lot safety limits must be positive.");
-      return(false);
-     }
-   if(InpPartialClosePercent<=0.0 || InpPartialClosePercent>=100.0)
-     {
-      Print("Partial close percent must be between 0 and 100.");
-      return(false);
-     }
    if(InpSessionStartHour<0 || InpSessionStartHour>23 || InpSessionEndHour<1 || InpSessionEndHour>24)
      {
       Print("Session hours are invalid.");
-      return(false);
-     }
-   double lot=NormalizeVolume(InpFixedLot);
-   int potential_orders=InpLevelsPerSide*2;
-   double potential_lots=lot*potential_orders;
-   if(potential_lots>InpMaxPendingLots+1e-8 || potential_lots>InpMaxOpenLots+1e-8)
-     {
-      PrintFormat("Unsafe grid: potential lots %.2f exceed pending/open cap.",potential_lots);
-      return(false);
-     }
-   ENUM_ACCOUNT_MARGIN_MODE margin_mode=(ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(ACCOUNT_MARGIN_MODE);
-   if(margin_mode==ACCOUNT_MARGIN_MODE_RETAIL_HEDGING && potential_orders>InpMaxOpenPositions)
-     {
-      PrintFormat("Unsafe grid: %d potential positions exceed hard cap %d.",
-                  potential_orders,InpMaxOpenPositions);
       return(false);
      }
    return(true);
   }
 
 //+------------------------------------------------------------------+
-void ResetDailyBaseline(const bool force)
+void ClearLegacyPerOrderExits()
   {
-   MqlDateTime now;
-   TimeToStruct(TimeCurrent(),now);
-   int key=now.year*10000+now.mon*100+now.day;
-   if(!force && key==g_day_key)
-      return;
+   for(int i=PositionsTotal()-1; i>=0; i--)
+     {
+      ulong ticket=PositionGetTicket(i);
+      if(ticket==0 || !PositionSelectByTicket(ticket))
+         continue;
+      if(PositionGetString(POSITION_SYMBOL)!=_Symbol ||
+         (long)PositionGetInteger(POSITION_MAGIC)!=InpMagic)
+         continue;
+      double old_sl=PositionGetDouble(POSITION_SL);
+      double old_tp=PositionGetDouble(POSITION_TP);
+      if(old_sl==0.0 && old_tp==0.0)
+         continue;
+      bool modify_sent=trade.PositionModify(ticket,0.0,0.0);
+      if(TradeResultAccepted(modify_sent,false,false,true))
+         PrintFormat("Cleared legacy position SL/TP ticket=%I64u",ticket);
+      else
+         PrintTradeFailure("ClearLegacyPositionSLTP",(int)ticket);
+     }
 
-   string day_key=RiskKey("day");
-   string balance_key=RiskKey("balance");
-   string equity_key=RiskKey("equity");
+   for(int i=OrdersTotal()-1; i>=0; i--)
+     {
+      ulong ticket=OrderGetTicket(i);
+      if(ticket==0)
+         continue;
+      if(OrderGetString(ORDER_SYMBOL)!=_Symbol ||
+         (long)OrderGetInteger(ORDER_MAGIC)!=InpMagic)
+         continue;
+      double old_sl=OrderGetDouble(ORDER_SL);
+      double old_tp=OrderGetDouble(ORDER_TP);
+      if(old_sl==0.0 && old_tp==0.0)
+         continue;
+      bool delete_sent=trade.OrderDelete(ticket);
+      if(TradeResultAccepted(delete_sent,false,false,false))
+         PrintFormat("Deleted legacy pending SL/TP ticket=%I64u",ticket);
+      else
+         PrintTradeFailure("DeleteLegacyPendingSLTP",(int)ticket);
+     }
+  }
+
+//+------------------------------------------------------------------+
+void RestoreRiskLock()
+  {
    string lock_key=RiskKey("lock");
-   bool same_day=(GlobalVariableCheck(day_key) &&
-                  (int)GlobalVariableGet(day_key)==key &&
-                  GlobalVariableCheck(balance_key) &&
-                  GlobalVariableCheck(equity_key));
    bool stored_lock=(GlobalVariableCheck(lock_key) && GlobalVariableGet(lock_key)>0.5);
    bool owned_exposure=(CountOurPositions()>0 || CountOurPendings()>0);
 
-   // A broker-day rollover must never unlock residual exposure from a prior
-   // emergency. Keep the old lock/baseline until liquidation is verified.
-   if(!same_day && (g_risk_lock || stored_lock) && owned_exposure)
+   if(InpClearRiskLockOnInit && !owned_exposure)
      {
-      bool newly_restored=!g_risk_lock;
-      g_risk_lock=true;
-      if(GlobalVariableCheck(balance_key))
-         g_day_start_balance=GlobalVariableGet(balance_key);
-      if(GlobalVariableCheck(equity_key))
-         g_start_equity=GlobalVariableGet(equity_key);
-      if(GlobalVariableCheck(day_key))
-         g_day_key=(int)GlobalVariableGet(day_key);
-      if(newly_restored)
-         Print("Risk lock carried across broker-day rollover until exposure is zero.");
-      return;
+      stored_lock=false;
+      GlobalVariableSet(lock_key,0.0);
+      GlobalVariablesFlush();
+      Print("Persistent risk lock cleared on init.");
      }
 
-   g_day_key=key;
-   if(same_day)
-     {
-      g_day_start_balance=GlobalVariableGet(balance_key);
-      g_start_equity=GlobalVariableGet(equity_key);
-      g_risk_lock=(GlobalVariableCheck(lock_key) && GlobalVariableGet(lock_key)>0.5);
-      PrintFormat("Daily baseline restored: balance=%.2f equity=%.2f lock=%s",
-                  g_day_start_balance,g_start_equity,(g_risk_lock ? "ON" : "OFF"));
-      return;
-     }
-
-   g_day_start_balance=AccountInfoDouble(ACCOUNT_BALANCE);
-   g_start_equity=AccountInfoDouble(ACCOUNT_EQUITY);
-   g_risk_lock=false;
-   GlobalVariableSet(day_key,(double)key);
-   GlobalVariableSet(balance_key,g_day_start_balance);
-   GlobalVariableSet(equity_key,g_start_equity);
-   GlobalVariableSet(lock_key,0.0);
-   GlobalVariablesFlush();
-   PrintFormat("Daily baseline reset: balance=%.2f equity=%.2f",
-               g_day_start_balance,g_start_equity);
+   g_risk_lock=stored_lock;
+   PrintFormat("Persistent risk lock restored: %s",(g_risk_lock ? "ON" : "OFF"));
   }
 
 //+------------------------------------------------------------------+
@@ -288,6 +254,12 @@ void MaintainGrid()
    int positions=CountOurPositions();
    int pendings=CountOurPendings();
 
+   if(InpGridMode==GRID_REVERSAL)
+     {
+      MaintainReversal(positions,pendings);
+      return;
+     }
+
    if(InpGridMode==GRID_OCO && positions>0)
      {
       bool has_buy=HasPositionType(POSITION_TYPE_BUY);
@@ -310,21 +282,16 @@ void MaintainGrid()
      {
       CancelAllPendings("flat-cycle cleanup");
       pendings=CountOurPendings();
-      g_last_flat_time=TimeCurrent();
       g_cycle_active=false;
       g_exit_seen=false;
      }
    else if(pending_cycle_ended)
-      g_last_flat_time=TimeCurrent();
+     {
+      g_cycle_active=false;
+      g_exit_seen=false;
+     }
    else if(g_exit_seen && positions>0)
       g_exit_seen=false;
-
-   if(positions==0 && pendings>0 && g_last_flat_time>0 &&
-      TimeCurrent()-g_last_flat_time<InpCooldownMinutes*60)
-     {
-      CancelAllPendings("cooldown cleanup retry");
-      pendings=CountOurPendings();
-     }
 
    g_previous_positions=positions;
    g_previous_pendings=pendings;
@@ -345,19 +312,8 @@ void MaintainGrid()
 
    if(CurrentSpreadPoints()>InpMaxSpreadPoints)
       return;
-
-   double open_lots=OurOpenLots();
-   if(positions>=InpMaxOpenPositions || open_lots>=InpMaxOpenLots-1e-8)
-     {
-      if(pendings>0)
-         CancelAllPendings("position cap");
-      return;
-     }
-
    if(positions==0 && pendings==0)
      {
-      if(g_last_flat_time>0 && TimeCurrent()-g_last_flat_time<InpCooldownMinutes*60)
-         return;
       PlaceFreshGrid();
       return;
      }
@@ -378,7 +334,52 @@ void MaintainGrid()
   }
 
 //+------------------------------------------------------------------+
-bool PlaceFreshGrid()
+string GridModeName()
+  {
+   if(InpGridMode==GRID_OCO)
+      return("OCO");
+   if(InpGridMode==GRID_HEDGE)
+      return("HEDGE");
+   return("REVERSAL");
+  }
+
+//+------------------------------------------------------------------+
+int CountOurPendingsType(const ENUM_ORDER_TYPE wanted)
+  {
+   int count=0;
+   for(int i=OrdersTotal()-1; i>=0; i--)
+     {
+      ulong ticket=OrderGetTicket(i);
+      if(ticket==0)
+         continue;
+      if(OrderGetString(ORDER_SYMBOL)!=_Symbol ||
+         (long)OrderGetInteger(ORDER_MAGIC)!=InpMagic)
+         continue;
+      if((ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE)==wanted)
+         count++;
+     }
+   return(count);
+  }
+
+//+------------------------------------------------------------------+
+bool PlaceReversalPending(const ENUM_ORDER_TYPE order_type,const double price,const string comment)
+  {
+   double lot=NormalizeVolume(InpFixedLot);
+   ENUM_ORDER_TYPE_TIME time_type=(InpPendingExpiryHours>0 ? ORDER_TIME_SPECIFIED : ORDER_TIME_GTC);
+   datetime expiration=(InpPendingExpiryHours>0 ? TimeCurrent()+InpPendingExpiryHours*3600 : 0);
+   bool sent=false;
+   if(order_type==ORDER_TYPE_BUY_STOP)
+      sent=trade.BuyStop(lot,NormalizePrice(price),_Symbol,0.0,0.0,time_type,expiration,comment);
+   else if(order_type==ORDER_TYPE_SELL_STOP)
+      sent=trade.SellStop(lot,NormalizePrice(price),_Symbol,0.0,0.0,time_type,expiration,comment);
+   if(TradeResultAccepted(sent,true,false,false) && trade.ResultOrder()>0)
+      return(true);
+   PrintTradeFailure("ReversalPending",0);
+   return(false);
+  }
+
+//+------------------------------------------------------------------+
+bool PlaceFreshReversal()
   {
    if(CountOurPositions()>0 || CountOurPendings()>0)
       return(false);
@@ -387,15 +388,98 @@ bool PlaceFreshGrid()
    if(!SymbolInfoTick(_Symbol,tick))
       return(false);
 
-   double lot=NormalizeVolume(InpFixedLot);
-   double requested=lot*InpLevelsPerSide*2.0;
-   if(requested>InpMaxPendingLots+1e-8)
+   int stops_level=(int)SymbolInfoInteger(_Symbol,SYMBOL_TRADE_STOPS_LEVEL);
+   int offset=MathMax(InpInitialOffsetPoints,stops_level+1);
+   g_anchor_price=(tick.ask+tick.bid)/2.0;
+   double buy_price=tick.ask+offset*_Point;
+   double sell_price=tick.bid-offset*_Point;
+   bool buy_ok=PlaceReversalPending(ORDER_TYPE_BUY_STOP,buy_price,
+                                    StringFormat("%s:R:B",InpOrderPrefix));
+   bool sell_ok=PlaceReversalPending(ORDER_TYPE_SELL_STOP,sell_price,
+                                     StringFormat("%s:R:S",InpOrderPrefix));
+   if(!buy_ok || !sell_ok)
      {
-      PrintFormat("Grid rejected: requested pending lots %.2f exceeds cap %.2f",
-                  requested,InpMaxPendingLots);
+      CancelAllPendings("reversal pair rollback");
       return(false);
      }
+   PrintFormat("Reversal pair placed at anchor %.5f: BUY STOP=1, SELL STOP=1",
+               g_anchor_price);
+   return(true);
+  }
 
+//+------------------------------------------------------------------+
+void MaintainReversal(const int positions,const int pendings)
+  {
+   if(positions>1)
+     {
+      PrintFormat("Reversal exposure violation: positions=%d; flattening before restart.",positions);
+      CloseAllPositions("reversal max-one-position enforcement");
+      CancelAllPendings("reversal max-one-position enforcement");
+      return;
+     }
+
+   if(positions==0)
+     {
+      if(g_previous_positions>0 || g_exit_seen)
+         CancelAllPendings("reversal flat reset");
+      if(CountOurPendings()==0)
+         PlaceFreshReversal();
+      return;
+     }
+
+   ENUM_POSITION_TYPE position_type=POSITION_TYPE_BUY;
+   for(int i=PositionsTotal()-1; i>=0; i--)
+     {
+      ulong ticket=PositionGetTicket(i);
+      if(ticket==0 || !PositionSelectByTicket(ticket))
+         continue;
+      if(PositionGetString(POSITION_SYMBOL)==_Symbol &&
+         (long)PositionGetInteger(POSITION_MAGIC)==InpMagic)
+        {
+         position_type=(ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+         break;
+        }
+     }
+
+   ENUM_ORDER_TYPE wanted=(position_type==POSITION_TYPE_BUY ? ORDER_TYPE_SELL_STOP : ORDER_TYPE_BUY_STOP);
+   ENUM_ORDER_TYPE unwanted=(position_type==POSITION_TYPE_BUY ? ORDER_TYPE_BUY_STOP : ORDER_TYPE_SELL_STOP);
+   if(CountOurPendingsType(unwanted)>0)
+      CancelPendingType(unwanted,"reversal same-side pending cleanup");
+
+   int opposite_count=CountOurPendingsType(wanted);
+   if(opposite_count>1)
+     {
+      CancelPendingType(wanted,"reversal duplicate pending cleanup");
+      opposite_count=0;
+     }
+   if(opposite_count==0)
+     {
+      MqlTick tick;
+      if(!SymbolInfoTick(_Symbol,tick))
+         return;
+      int stops_level=(int)SymbolInfoInteger(_Symbol,SYMBOL_TRADE_STOPS_LEVEL);
+      int offset=MathMax(InpInitialOffsetPoints,stops_level+1);
+      double price=(wanted==ORDER_TYPE_BUY_STOP ? tick.ask+offset*_Point : tick.bid-offset*_Point);
+      PlaceReversalPending(wanted,price,
+                           StringFormat("%s:R:%s",InpOrderPrefix,
+                                        wanted==ORDER_TYPE_BUY_STOP ? "B" : "S"));
+     }
+  }
+
+//+------------------------------------------------------------------+
+bool PlaceFreshGrid()
+  {
+   if(InpGridMode==GRID_REVERSAL)
+      return(PlaceFreshReversal());
+
+   if(CountOurPositions()>0 || CountOurPendings()>0)
+      return(false);
+
+   MqlTick tick;
+   if(!SymbolInfoTick(_Symbol,tick))
+      return(false);
+
+   double lot=NormalizeVolume(InpFixedLot);
    int stops_level=(int)SymbolInfoInteger(_Symbol,SYMBOL_TRADE_STOPS_LEVEL);
    int offset=MathMax(InpInitialOffsetPoints,stops_level+1);
    ENUM_ORDER_TYPE_TIME time_type=(InpPendingExpiryHours>0 ? ORDER_TIME_SPECIFIED : ORDER_TIME_GTC);
@@ -409,22 +493,18 @@ bool PlaceFreshGrid()
      {
       int distance=offset+level*InpGridSpacingPoints;
       double buy_price=NormalizePrice(tick.ask+distance*_Point);
-      double buy_sl=NormalizePrice(buy_price-InpStopLossPoints*_Point);
-      double buy_tp=NormalizePrice(buy_price+InpTakeProfitPoints*_Point);
       string buy_comment=StringFormat("%s:B:%02d",InpOrderPrefix,level+1);
 
-      bool buy_sent=trade.BuyStop(lot,buy_price,_Symbol,buy_sl,buy_tp,time_type,expiration,buy_comment);
+      bool buy_sent=trade.BuyStop(lot,buy_price,_Symbol,0.0,0.0,time_type,expiration,buy_comment);
       if(TradeResultAccepted(buy_sent,true,false,false) && trade.ResultOrder()>0)
          buy_ok++;
       else
          PrintTradeFailure("BuyStop",level+1);
 
       double sell_price=NormalizePrice(tick.bid-distance*_Point);
-      double sell_sl=NormalizePrice(sell_price+InpStopLossPoints*_Point);
-      double sell_tp=NormalizePrice(sell_price-InpTakeProfitPoints*_Point);
       string sell_comment=StringFormat("%s:S:%02d",InpOrderPrefix,level+1);
 
-      bool sell_sent=trade.SellStop(lot,sell_price,_Symbol,sell_sl,sell_tp,time_type,expiration,sell_comment);
+      bool sell_sent=trade.SellStop(lot,sell_price,_Symbol,0.0,0.0,time_type,expiration,sell_comment);
       if(TradeResultAccepted(sell_sent,true,false,false) && trade.ResultOrder()>0)
          sell_ok++;
       else
@@ -448,6 +528,10 @@ bool PlaceFreshGrid()
 //+------------------------------------------------------------------+
 void ManageRiskAndPositions()
   {
+   // Re-run after terminal/account synchronization so legacy server-side
+   // SL/TP is removed from positions and pendings created by older builds.
+   ClearLegacyPerOrderExits();
+
    if(g_risk_lock)
      {
       CancelAllPendings("persistent risk-lock enforcement");
@@ -458,162 +542,88 @@ void ManageRiskAndPositions()
    double basket=OurFloatingProfit();
    int positions=CountOurPositions();
 
+   if(g_basket_tp_closing)
+     {
+      CloseAllPositions("basket TP retry until flat");
+      CancelAllPendings("basket TP retry until flat");
+      if(CountOurPositions()==0 && CountOurPendings()==0)
+        {
+         g_basket_tp_closing=false;
+         g_last_flat_time=0;
+         g_cycle_active=false;
+         g_exit_seen=false;
+         g_previous_positions=0;
+         g_previous_pendings=0;
+         Print("Basket TP cleanup complete: all owned positions/pending orders are closed; grid may restart immediately.");
+        }
+      return;
+     }
+
+   if(g_basket_sl_closing)
+     {
+      CloseAllPositions("basket SL retry until flat");
+      CancelAllPendings("basket SL retry until flat");
+      if(RestartAfterBasketSL())
+         Print("Basket SL cleanup complete: all owned exposure is zero; grid may restart immediately.");
+      return;
+     }
+
    if(positions>0 && InpBasketTakeProfitMoney>0.0 && basket>=InpBasketTakeProfitMoney)
      {
+      g_basket_tp_closing=true;
       CloseAllPositions("basket TP");
       CancelAllPendings("basket TP");
-      g_last_flat_time=TimeCurrent();
+      if(InpRestartImmediatelyAfterBasketTP && CountOurPositions()==0 && CountOurPendings()==0)
+        {
+         g_basket_tp_closing=false;
+         g_last_flat_time=0;
+         g_cycle_active=false;
+         g_exit_seen=false;
+         g_previous_positions=0;
+         g_previous_pendings=0;
+         PrintFormat("Basket TP %.2f reached: restarting grid immediately without cooldown.",basket);
+        }
+      else
+         PrintFormat("Basket TP %.2f reached: retrying close/delete until all owned exposure is zero.",basket);
       return;
      }
 
    if(positions>0 && InpBasketStopLossMoney>0.0 && basket<=-InpBasketStopLossMoney)
      {
-      CloseAllPositions("basket SL");
-      CancelAllPendings("basket SL");
-      g_last_flat_time=TimeCurrent();
-      SetRiskLock(true);
+      if(InpRestartImmediatelyAfterBasketSL)
+        {
+         g_basket_sl_closing=true;
+         CloseAllPositions("basket SL");
+         CancelAllPendings("basket SL");
+         if(RestartAfterBasketSL())
+            PrintFormat("Basket SL %.2f reached: restarting grid immediately without risk lock.",basket);
+         else
+            PrintFormat("Basket SL %.2f reached: retrying close/delete until all owned exposure is zero.",basket);
+        }
+      else
+        {
+         CloseAllPositions("basket SL");
+         CancelAllPendings("basket SL");
+         SetRiskLock(true);
+         PrintFormat("Basket SL %.2f reached: persistent risk lock enabled.",basket);
+        }
       return;
-     }
-
-   double equity=AccountInfoDouble(ACCOUNT_EQUITY);
-   if(InpMaxEquityDrawdownPct>0.0 && g_start_equity>0.0)
-     {
-      double dd=(g_start_equity-equity)/g_start_equity*100.0;
-      if(dd>=InpMaxEquityDrawdownPct)
-        {
-         EmergencyStop(StringFormat("equity DD %.2f%%",dd));
-         return;
-        }
-     }
-
-   if(InpMaxDailyLossPercent>0.0 && g_day_start_balance>0.0)
-     {
-      double daily_loss=(g_day_start_balance-equity)/g_day_start_balance*100.0;
-      if(daily_loss>=InpMaxDailyLossPercent)
-        {
-         EmergencyStop(StringFormat("daily loss %.2f%%",daily_loss));
-         return;
-        }
-     }
-
-   if(positions>=InpMaxOpenPositions || OurOpenLots()>=InpMaxOpenLots-1e-8)
-      CancelAllPendings("max exposure reached");
-
-   ManageBreakEvenPartialAndTrail();
-  }
-
-//+------------------------------------------------------------------+
-void ManageBreakEvenPartialAndTrail()
-  {
-   for(int i=PositionsTotal()-1; i>=0; i--)
-     {
-      ulong ticket=PositionGetTicket(i);
-      if(ticket==0 || !PositionSelectByTicket(ticket))
-         continue;
-      if(PositionGetString(POSITION_SYMBOL)!=_Symbol)
-         continue;
-      if((long)PositionGetInteger(POSITION_MAGIC)!=InpMagic)
-         continue;
-
-      ENUM_POSITION_TYPE type=(ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-      double open=PositionGetDouble(POSITION_PRICE_OPEN);
-      double current=(type==POSITION_TYPE_BUY ? SymbolInfoDouble(_Symbol,SYMBOL_BID)
-                                               : SymbolInfoDouble(_Symbol,SYMBOL_ASK));
-      double old_sl=PositionGetDouble(POSITION_SL);
-      double tp=PositionGetDouble(POSITION_TP);
-      double profit_points=(type==POSITION_TYPE_BUY ? (current-open) : (open-current))/_Point;
-
-      if(InpEnablePartialClose && profit_points>=InpPartialTriggerPoints)
-         TryPartialClose(ticket);
-
-      double candidate_sl=old_sl;
-      bool modify=false;
-
-      if(profit_points>=InpBreakEvenTriggerPoints)
-        {
-         double be=(type==POSITION_TYPE_BUY ? open+InpBreakEvenLockPoints*_Point
-                                            : open-InpBreakEvenLockPoints*_Point);
-         if(IsBetterStop(type,be,candidate_sl))
-           {
-            candidate_sl=be;
-            modify=true;
-           }
-        }
-
-      if(profit_points>=InpTrailingStartPoints)
-        {
-         double trail=(type==POSITION_TYPE_BUY ? current-InpTrailingDistancePoints*_Point
-                                               : current+InpTrailingDistancePoints*_Point);
-         if(IsBetterStop(type,trail,candidate_sl))
-           {
-            candidate_sl=trail;
-            modify=true;
-           }
-        }
-
-      if(modify)
-        {
-         candidate_sl=NormalizePrice(candidate_sl);
-         bool modify_sent=trade.PositionModify(ticket,candidate_sl,tp);
-         if(!TradeResultAccepted(modify_sent,false,false,true))
-            PrintTradeFailure("PositionModify",(int)ticket);
-        }
      }
   }
 
 //+------------------------------------------------------------------+
-void TryPartialClose(const ulong ticket)
+bool RestartAfterBasketSL()
   {
-   string key=PartialKey(ticket);
-   if(GlobalVariableCheck(key))
-      return;
-   if(!PositionSelectByTicket(ticket))
-      return;
+   if(CountOurPositions()>0 || CountOurPendings()>0)
+      return(false);
 
-   ENUM_ACCOUNT_MARGIN_MODE margin_mode=(ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(ACCOUNT_MARGIN_MODE);
-   if(margin_mode!=ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
-     {
-      GlobalVariableSet(key,(double)TimeCurrent());
-      Print("Partial close skipped: account is not hedging mode.");
-      return;
-     }
-
-   double volume=PositionGetDouble(POSITION_VOLUME);
-   double min_volume=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN);
-   double close_volume=NormalizeVolume(volume*InpPartialClosePercent/100.0);
-   if(close_volume<min_volume || volume-close_volume<min_volume-1e-8)
-     {
-      GlobalVariableSet(key,(double)TimeCurrent());
-      return;
-     }
-
-   bool partial_sent=trade.PositionClosePartial(ticket,close_volume,InpMaxSlippagePoints);
-   if(TradeResultAccepted(partial_sent,false,true,false))
-     {
-      GlobalVariableSet(key,(double)TimeCurrent());
-      PrintFormat("Partial close ticket=%I64u volume=%.2f",ticket,close_volume);
-     }
-   else
-      PrintTradeFailure("PositionClosePartial",(int)ticket);
-  }
-
-//+------------------------------------------------------------------+
-bool IsBetterStop(const ENUM_POSITION_TYPE type,const double candidate,const double current_sl)
-  {
-   if(type==POSITION_TYPE_BUY)
-      return(current_sl==0.0 || candidate>current_sl+_Point);
-   return(current_sl==0.0 || candidate<current_sl-_Point);
-  }
-
-//+------------------------------------------------------------------+
-void EmergencyStop(const string reason)
-  {
-   if(!g_risk_lock)
-      Print("EMERGENCY STOP: ",reason);
-   SetRiskLock(true);
-   CancelAllPendings(reason);
-   CloseAllPositions(reason);
-   g_last_flat_time=TimeCurrent();
+   g_basket_sl_closing=false;
+   g_last_flat_time=0;
+   g_cycle_active=false;
+   g_exit_seen=false;
+   g_previous_positions=0;
+   g_previous_pendings=0;
+   return(true);
   }
 
 //+------------------------------------------------------------------+
@@ -646,22 +656,6 @@ bool HasPositionType(const ENUM_POSITION_TYPE wanted)
          return(true);
      }
    return(false);
-  }
-
-//+------------------------------------------------------------------+
-double OurOpenLots()
-  {
-   double lots=0.0;
-   for(int i=PositionsTotal()-1; i>=0; i--)
-     {
-      ulong ticket=PositionGetTicket(i);
-      if(ticket==0 || !PositionSelectByTicket(ticket))
-         continue;
-      if(PositionGetString(POSITION_SYMBOL)==_Symbol &&
-         (long)PositionGetInteger(POSITION_MAGIC)==InpMagic)
-         lots+=PositionGetDouble(POSITION_VOLUME);
-     }
-   return(lots);
   }
 
 //+------------------------------------------------------------------+
@@ -806,12 +800,6 @@ void SetRiskLock(const bool enabled)
    g_risk_lock=enabled;
    GlobalVariableSet(RiskKey("lock"),(enabled ? 1.0 : 0.0));
    GlobalVariablesFlush();
-  }
-
-//+------------------------------------------------------------------+
-string PartialKey(const ulong ticket)
-  {
-   return(StringFormat("%s.partial.%I64u",InpOrderPrefix,ticket));
   }
 
 //+------------------------------------------------------------------+

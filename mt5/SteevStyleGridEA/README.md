@@ -1,6 +1,6 @@
 # SteevStyleGridEA
 
-MT5 Expert Advisor สำหรับวาง `BUY STOP` และ `SELL STOP` เป็น Grid รอบราคาปัจจุบัน โดยค่าเริ่มต้นใช้โหมด OCO และไม่มี Martingale
+MT5 Expert Advisor สำหรับวาง `BUY STOP` และ `SELL STOP` เป็น Grid รอบราคาปัจจุบัน โดยค่าเริ่มต้นใช้โหมด Hedge ตามค่าที่ใช้งานจริง และไม่มี Martingale
 
 > สถานะ: เวอร์ชันแรกสำหรับ MT5 Strategy Tester และบัญชี Demo ก่อนใช้งานจริง
 
@@ -11,7 +11,8 @@ SteevStyleGridEA/
 ├── SteevStyleGridEA.mq5
 ├── README.md
 ├── presets/
-│   └── XAUUSD-Demo.set
+│   ├── XAUUSD-Demo.set
+│   └── XAUUSD-Reversal-Shadow.set
 ├── docs/
 │   └── backtest-plan.md
 ├── build/
@@ -36,15 +37,15 @@ Artifact: build/SteevStyleGridEA.ex5
 - กำหนด initial offset, grid spacing และจำนวนชั้น
 - `GRID_OCO`: เมื่อ BUY ถูกเปิด ลบ SELL STOP; เมื่อ SELL ถูกเปิด ลบ BUY STOP พร้อม reconcile/retry ทุก tick และหลัง restart
 - `GRID_HEDGE`: คง Pending Orders ทั้งสองฝั่ง
+- `GRID_REVERSAL`: Video-style; ถือ position ได้สูงสุด 1 ไม้ และรักษา pending ฝั่งตรงข้ามไว้ 1 ไม้ เมื่อเกิด duplicate exposure จะ flatten ก่อนเริ่มรอบใหม่
 - Fixed lot เท่านั้น ไม่มี Martingale
-- ตรวจ potential exposure ทั้ง Grid ก่อนเริ่ม เพื่อไม่ให้จำนวน position/open lots/pending lots เกิน hard cap แม้หลายคำสั่ง trigger เร็ว
-- SL/TP ต่อ order
-- Break-even และ lock กำไร
-- Partial close สำหรับบัญชี Hedging
-- Trailing stop
+- ตั้งจำนวน levels ได้อิสระโดยไม่มี position/open-lot/pending-lot cap ใน EA
+- ไม่มี TP/SL ต่อ order; ใช้ Basket Floating P/L เป็นเงื่อนไขปิดทั้งหมด
 - Basket TP/SL เป็นเงินในสกุลบัญชี
-- Daily loss lock และ equity drawdown lock
-- เก็บ daily baseline/risk lock ด้วย MT5 Global Variables; เมื่อ lock อยู่จะ retry ลบ Pending และปิด Position ทุก tick/timer จน exposure เป็นศูนย์ และไม่ปลด lock ตอน broker-day rollover หากยังมี exposure ค้าง
+- เมื่อ Basket TP ถึง `InpBasketTakeProfitMoney` (ค่าใช้งานจริง 5.0 เหรียญ) จะปิดไม้ทั้งหมดของ Symbol+Magic นี้; ถ้า `InpRestartImmediatelyAfterBasketTP=true` และปิด/ลบ pending สำเร็จครบ จะสร้าง Grid รอบใหม่ทันทีโดยไม่รอ cooldown
+- เมื่อ Basket SL ถึง `InpBasketStopLossMoney` จะปิด position และ pending ของ Symbol+Magic ให้หมด; ถ้า `InpRestartImmediatelyAfterBasketSL=true` จะสร้าง Grid รอบใหม่ทันทีโดยไม่ตั้ง risk lock หากปิดยังไม่ครบจะ retry ก่อนเสมอ
+- ไม่มี Daily Loss และ Equity Drawdown control ตาม configuration ที่ร้องขอ
+- persistent risk lock ใช้เฉพาะเมื่อปิด `InpRestartImmediatelyAfterBasketSL`; เมื่อ lock อยู่จะ retry ลบ Pending และปิด Position ทุก tick/timer
 - Max spread และ session filter
 - Pending expiration, cooldown และ recenter Grid
 - แยกคำสั่งด้วย Magic Number
@@ -54,9 +55,9 @@ Artifact: build/SteevStyleGridEA.ex5
 ตัวอย่างค่าเริ่มต้นบน XAUUSD:
 
 ```text
-ราคา Ask + 300 points = BUY STOP ชั้นแรก
-ราคา Bid - 300 points = SELL STOP ชั้นแรก
-ระยะห่างชั้นถัดไป = 300 points
+ราคา Ask + 200 points = BUY STOP ชั้นแรก
+ราคา Bid - 200 points = SELL STOP ชั้นแรก
+ระยะห่างชั้นถัดไป = 200 points
 จำนวน = 5 BUY + 5 SELL
 Lot = 0.01 ต่อ order
 ```
@@ -127,7 +128,7 @@ Broker แต่ละรายตีความ point/digits ของ XAUUSD 
 
 ### Grid
 
-- `InpGridMode`: OCO หรือ Hedge
+- `InpGridMode`: OCO, Hedge หรือ Reversal (2)
 - `InpFixedLot`: lot ต่อ pending order
 - `InpLevelsPerSide`: จำนวนชั้นแต่ละฝั่ง
 - `InpInitialOffsetPoints`: ระยะชั้นแรกจาก Bid/Ask
@@ -136,33 +137,29 @@ Broker แต่ละรายตีความ point/digits ของ XAUUSD 
 - `InpRecenterDistancePoints`: ระยะที่ราคาเคลื่อนจาก anchor ก่อนสร้าง Grid ใหม่
 - `InpCooldownMinutes`: เวลารอก่อนสร้างรอบใหม่
 
-### Protection
+### Exit calculation
 
-- `InpStopLossPoints`, `InpTakeProfitPoints`
-- `InpBreakEvenTriggerPoints`, `InpBreakEvenLockPoints`
-- `InpEnablePartialClose`, `InpPartialTriggerPoints`
-- `InpTrailingStartPoints`, `InpTrailingDistancePoints`
+- ไม่มี input TP/SL ต่อ order
+- `InpBasketTakeProfitMoney`: กำไรรวมที่ใช้ปิดทุก position
+- `InpBasketStopLossMoney`: ขาดทุนรวมที่ใช้ปิดทุก position
+- Basket exit รวม floating profit + swap ของ position ที่ตรง Symbol+Magic
 
 ### Safety
 
-- `InpMaxOpenPositions`
-- `InpMaxOpenLots`
-- `InpMaxPendingLots`
 - `InpBasketTakeProfitMoney`
+- `InpRestartImmediatelyAfterBasketTP`
 - `InpBasketStopLossMoney`
-- `InpMaxDailyLossPercent`
-- `InpMaxEquityDrawdownPct`
+- `InpRestartImmediatelyAfterBasketSL`
+
 - `InpMaxSpreadPoints`
 
 ## ข้อจำกัดเวอร์ชันแรก
 
-- Partial close ทำเฉพาะบัญชี `ACCOUNT_MARGIN_MODE_RETAIL_HEDGING`; บัญชี Netting จะข้าม partial แต่ยังทำ BE/trailing
-- ค่าเริ่มต้น 5+5 Pending ต้องใช้ `InpMaxOpenPositions=10` บนบัญชี Hedging; บัญชี Netting ใช้ hard cap ด้วย `InpMaxOpenLots`
-- Daily loss/equity baseline และ risk lock เก็บใน MT5 Global Variables ตลอดวัน จึงไม่ถูก reset ด้วยการ restart EA
+- EA ไม่จำกัด position/open lots/pending lots; จำนวนจริงยังจำกัดด้วย margin และข้อจำกัดของ broker
 - ยังไม่มี Economic Calendar news filter
 - ยังไม่มี SMC/BOS/CHoCH gate; EA นี้เป็น Grid engine แยกจาก `trad`
-- Fast market อาจเกิด slippage หรือ trigger ได้หลายคำสั่งก่อน OCO ลบฝั่งตรงข้าม แต่ potential exposure รวมต้องผ่าน hard cap ก่อนวาง Grid
-- Basket WR ที่สูงจาก partial close ต้องประเมินร่วมกับ ExpR และ drawdown ไม่ใช้ WR อย่างเดียว
+- Fast market อาจเกิด slippage หรือ trigger หลายคำสั่ง; ผู้ใช้ต้องกำหนด levels/lot ให้เหมาะกับ margin เอง
+- ผลลัพธ์จาก Basket TP/SL ต้องประเมินร่วมกับ Expectancy และ drawdown ไม่ใช้ win rate อย่างเดียว
 
 ## Validation workflow
 
