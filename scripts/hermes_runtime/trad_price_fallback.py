@@ -183,7 +183,7 @@ def main(argv=None) -> int:
     ensure_basis_table(con)
 
     open_rows = con.execute(
-        "select * from trade_plan_outcomes where upper(symbol)=upper(?) and timeframe=? and status in ('pending','entered')",
+        "select * from trade_plan_outcomes where upper(symbol)=upper(?) and timeframe=? and status='entered'",
         (args.symbol, args.timeframe),
     ).fetchall()
     latest = con.execute(
@@ -236,13 +236,13 @@ def main(argv=None) -> int:
             continue
         if result:
             con.execute(
-                "update trade_plan_outcomes set status='closed', result=?, current_price=?, max_favorable=?, max_adverse=?, closed_at=coalesce(closed_at,?), last_checked_at=?, exit_reason=coalesce(exit_reason, ?) where id=? and status in ('pending','entered')",
+                "update trade_plan_outcomes set status='closed', result=?, current_price=?, max_favorable=?, max_adverse=?, closed_at=coalesce(closed_at,?), last_checked_at=?, exit_reason=coalesce(exit_reason, ?) where id=? and status='entered'",
                 (result, price, mfe, mae, ts, ts, f"price fallback source={source}", r["id"]),
             )
             closed.append((r["id"], result))
         else:
             con.execute(
-                "update trade_plan_outcomes set current_price=?, max_favorable=?, max_adverse=?, last_checked_at=? where id=? and status in ('pending','entered')",
+                "update trade_plan_outcomes set current_price=?, max_favorable=?, max_adverse=?, last_checked_at=? where id=? and status='entered'",
                 (price, mfe, mae, ts, r["id"]),
             )
             updated += 1

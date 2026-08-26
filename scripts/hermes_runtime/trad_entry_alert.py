@@ -80,6 +80,16 @@ def connect(path: Path) -> sqlite3.Connection:
     cols = {r[1] for r in con.execute("PRAGMA table_info(telegram_entry_alerts)").fetchall()}
     if "outcome_id" not in cols:
         con.execute("ALTER TABLE telegram_entry_alerts ADD COLUMN outcome_id INTEGER")
+    outcome_cols = {r[1] for r in con.execute("PRAGMA table_info(trade_plan_outcomes)").fetchall()}
+    for name, ddl in {
+        "order_score": "REAL",
+        "setup_score": "REAL",
+        "setup_type": "TEXT",
+        "session_label": "TEXT",
+        "order_metadata_json": "TEXT",
+    }.items():
+        if name not in outcome_cols:
+            con.execute(f"ALTER TABLE trade_plan_outcomes ADD COLUMN {name} {ddl}")
     return con
 
 
@@ -103,8 +113,49 @@ def latest_signal(con: sqlite3.Connection, symbol: str, timeframe: str) -> sqlit
     ).fetchone()
 
 
+def signal_age_seconds(row: sqlite3.Row) -> float | None:
+    try:
+        created = datetime.fromisoformat(str(row["created_at"]).replace("Z", "+00:00"))
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - created).total_seconds()
+    except Exception:
+        return None
+
+
 def fmt(n: float | None) -> str:
     return "-" if n is None else f"{float(n):.1f}".rstrip("0").rstrip(".")
+
+
+def local_session_label(value: Any | None = None) -> str:
+    try:
+        if value:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = datetime.now(timezone.utc)
+        hour_ict = (dt.astimezone(timezone.utc).hour + 7) % 24
+    except Exception:
+        return "unknown"
+    if 6 <= hour_ict < 14:
+        return "Asia"
+    if 14 <= hour_ict < 19:
+        return "London"
+    if 19 <= hour_ict < 23:
+        return "London/NY overlap"
+    return "NY/late"
+
+
+def classify_setup_type(row: sqlite3.Row, direction: str, bullish: bool, bearish: bool) -> str:
+    regime = str(row["regime"] or "").lower() if "regime" in row.keys() else ""
+    if "range" in regime or "mean" in regime:
+        return "rejection/mean-reversion"
+    if (direction == "BUY" and bullish) or (direction == "SELL" and bearish) or "trend" in regime or "momentum" in regime:
+        return "continuation/trend"
+    if "break" in regime:
+        return "breakout"
+    return "pullback/unclear"
 
 
 # XAUUSD point convention here: 100 points = 1.00 price unit.
@@ -114,7 +165,13 @@ MAX_SL_POINTS = 800
 POINTS_PER_PRICE_UNIT = 100
 MIN_SL_DISTANCE = MIN_SL_POINTS / POINTS_PER_PRICE_UNIT
 MAX_SL_DISTANCE = MAX_SL_POINTS / POINTS_PER_PRICE_UNIT
-MIN_ENTRY_SCORE = 70
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from trad_mtf_structure import analyze as mtf_analyze, allow_direction as mtf_allow_direction  # noqa: E402
+
+MIN_ENTRY_SCORE = 60
+MIN_ENGINE_SCORE = 60
+MAX_ENTRY_ZONE_ATR = 2.0
 
 
 def clamp_sl(direction: str, entry_low: float, entry_high: float, sl: float) -> float:
@@ -124,10 +181,10 @@ def clamp_sl(direction: str, entry_low: float, entry_high: float, sl: float) -> 
         distance = entry_high - sl
         distance = max(MIN_SL_DISTANCE, min(MAX_SL_DISTANCE, distance))
         return entry_high - distance
-    # Worst SELL fill is the bottom of the entry zone.
-    distance = sl - entry_low
+    # A SELL stop must remain above the entire entry zone.
+    distance = sl - entry_high
     distance = max(MIN_SL_DISTANCE, min(MAX_SL_DISTANCE, distance))
-    return entry_low + distance
+    return entry_high + distance
 
 
 def derive_order(row: sqlite3.Row) -> tuple[dict[str, Any], str]:
@@ -140,6 +197,7 @@ def derive_order(row: sqlite3.Row) -> tuple[dict[str, Any], str]:
     sentiment = tech.get("market_sentiment") or {}
     rsi = tech.get("rsi") or {}
     macd = tech.get("macd") or {}
+    atr_data = tech.get("atr") or {}
 
     sd1_low = float(sd.get("sd1_low") or price - 5)
     sd1_high = float(sd.get("sd1_high") or price + 5)
@@ -228,9 +286,13 @@ def derive_order(row: sqlite3.Row) -> tuple[dict[str, Any], str]:
         "tp3": tp3,
         "rsi": rsi_val,
         "ema20": ema20,
+        "atr": atr_data.get("value"),
         "score": score,
         "rr": rr,
         "invalidation": invalidation,
+        "setup_type": classify_setup_type(row, direction, bullish, bearish),
+        "session_label": local_session_label(row["created_at"] if "created_at" in row.keys() else None),
+        "signal_score": row["total_score"],
     }
     fp = (
         f"{row['symbol']}:{row['timeframe']}:{round(price)}:{direction}:"
@@ -238,6 +300,46 @@ def derive_order(row: sqlite3.Row) -> tuple[dict[str, Any], str]:
         f"{round(sl)}:{round(tp1 or 0)}:{round(tp2 or 0)}"
     )
     return order, fp
+
+
+def signal_quality_reason(row: sqlite3.Row) -> str | None:
+    """Reject clearly incomplete fresh candles before deriving a real order."""
+    tech = parse_json(row["technical_json"], {})
+    price_data = tech.get("price_data") if isinstance(tech.get("price_data"), dict) else {}
+    try:
+        ohlc = [float(price_data[name]) for name in ("open", "high", "low", "close")]
+        volume = float(price_data.get("volume") or 0)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if max(ohlc) - min(ohlc) <= 1e-9 and volume <= 1:
+        return f"งดส่ง Order: แท่งข้อมูลยังไม่สมบูรณ์ OHLC เท่ากันและ volume={volume:g}"
+    return None
+
+
+def order_geometry_reason(order: dict[str, Any]) -> str | None:
+    """Fail closed when stop/target placement cannot describe a valid trade."""
+    try:
+        direction = str(order["direction"])
+        low = float(order["entry_low"])
+        high = float(order["entry_high"])
+        sl = float(order["sl"])
+        tp1 = float(order["tp1"])
+    except (KeyError, TypeError, ValueError):
+        return "งดส่ง Order: geometry ไม่ครบ"
+    if low > high:
+        return f"งดส่ง {direction}: entry zone กลับด้าน"
+    if direction == "BUY" and not (sl < low <= high < tp1):
+        return f"งดส่ง BUY: geometry ผิด ต้องเป็น SL < entry_low <= entry_high < TP1"
+    if direction == "SELL" and not (tp1 < low <= high < sl):
+        return f"งดส่ง SELL: geometry ผิด ต้องเป็น TP1 < entry_low <= entry_high < SL"
+    atr_raw = order.get("atr")
+    try:
+        atr = float(atr_raw)
+    except (TypeError, ValueError):
+        atr = 0.0
+    if atr > 0 and high - low > MAX_ENTRY_ZONE_ATR * atr:
+        return f"งดส่ง {direction}: entry zone กว้างเกิน {MAX_ENTRY_ZONE_ATR:g} ATR"
+    return None
 
 
 def already_sent(con: sqlite3.Connection, symbol: str, timeframe: str, fp: str, target: str) -> bool:
@@ -248,20 +350,25 @@ def already_sent(con: sqlite3.Connection, symbol: str, timeframe: str, fp: str, 
 
 
 def global_entry_floor_reason(order: dict[str, Any]) -> str | None:
-    """Hard floor for all deterministic Telegram entry alerts."""
+    """Hard floor for all deterministic Telegram entry alerts.
+
+    Approved 2026-08-05: relax so a WAIT_CONFIRMATION setup can also fire a real
+    Order once its derived setup score clears the floor (currently >=60), not
+    only a confirmed TRADE. This lets the system send entry orders during
+    ranging/mean-reversion regimes where the engine mostly returns
+    WAIT_CONFIRMATION.
+    """
     decision = str(order.get("decision") or "")
     score = int(order.get("score") or 0)
-    if decision == "TRADE" and score >= MIN_ENTRY_SCORE:
-        return None
-    if decision != "TRADE":
+    engine_score = int(order.get("signal_score") or 0)
+    if score < MIN_ENTRY_SCORE:
         return (
-            f"งดส่ง {order['direction']}: ต้องเป็น decision=TRADE ก่อนส่ง auto-entry; "
-            f"ตอนนี้ {decision or '-'} score {score}/100"
+            f"งดส่ง {order['direction']}: setup score {score}/100 ต่ำกว่าเกณฑ์ {MIN_ENTRY_SCORE} "
+            f"(decision={decision or '-'})"
         )
-    return (
-        f"งดส่ง {order['direction']}: score {score}/100 ต่ำกว่า hard floor {MIN_ENTRY_SCORE} "
-        "สำหรับ auto-entry"
-    )
+    if engine_score < MIN_ENGINE_SCORE:
+        return f"งดส่ง {order['direction']}: engine score {engine_score}/100 ต่ำกว่าเกณฑ์ {MIN_ENGINE_SCORE}"
+    return None
 
 
 def confirmation_skip_reason(order: dict[str, Any]) -> str | None:
@@ -273,7 +380,8 @@ def recent_similar_zone_reason(con: sqlite3.Connection, order: dict[str, Any]) -
     """Avoid repeated same-direction zones for 45 minutes unless a strong confirmed trade appears."""
     rows = con.execute(
         """
-        SELECT id, direction, entry_low, entry_high, status, result, created_at, closed_at
+        SELECT id, direction, entry_low, entry_high, sl, tp1, tp2, tp3,
+               status, result, created_at, closed_at
         FROM trade_plan_outcomes
         WHERE symbol=? AND timeframe=? AND direction=?
         ORDER BY id DESC LIMIT 16
@@ -293,6 +401,13 @@ def recent_similar_zone_reason(con: sqlite3.Connection, order: dict[str, Any]) -
     if strong_fresh_confirmation:
         return None
     for row in rows:
+        historical = {
+            "direction": row["direction"], "entry_low": row["entry_low"],
+            "entry_high": row["entry_high"], "sl": row["sl"],
+            "tp1": row["tp1"], "tp2": row["tp2"], "tp3": row["tp3"],
+        }
+        if order_geometry_reason(historical) is not None:
+            continue
         raw_time = row["closed_at"] or row["created_at"]
         try:
             t = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
@@ -319,7 +434,8 @@ def open_duplicate_reason(con: sqlite3.Connection, order: dict[str, Any]) -> str
     """Do not stack repeated orders in the same direction while one is active."""
     row = con.execute(
         """
-        SELECT id, direction, entry_low, entry_high, sl, tp1, tp2, status, result, created_at
+        SELECT id, direction, entry_low, entry_high, sl, tp1, tp2, tp3,
+               status, result, created_at
         FROM trade_plan_outcomes
         WHERE symbol=? AND timeframe=? AND direction=? AND status IN ('pending','entered')
         ORDER BY id DESC LIMIT 1
@@ -327,6 +443,8 @@ def open_duplicate_reason(con: sqlite3.Connection, order: dict[str, Any]) -> str
         (order["symbol"], order["timeframe"], order["direction"]),
     ).fetchone()
     if row is None:
+        return None
+    if order_geometry_reason(dict(row)) is not None:
         return None
 
     existing_low = float(row["entry_low"])
@@ -352,6 +470,8 @@ def adaptive_skip_reason(con: sqlite3.Connection, order: dict[str, Any]) -> str 
         SELECT result, max_favorable, max_adverse, current_price, created_at, closed_at
         FROM trade_plan_outcomes
         WHERE symbol=? AND timeframe=? AND direction=? AND status='closed'
+          AND source='telegram_entry_alert'
+          AND entry_price IS NOT NULL AND entered_at IS NOT NULL
         ORDER BY closed_at DESC, id DESC LIMIT 8
         """,
         (order["symbol"], order["timeframe"], order["direction"]),
@@ -362,9 +482,6 @@ def adaptive_skip_reason(con: sqlite3.Connection, order: dict[str, Any]) -> str 
     wins = sum(1 for r in rows if str(r["result"] or "").startswith("TP"))
     recent3_losses = len(rows) >= 3 and all(str(r["result"]) in {"SL", "CUT"} for r in rows[:3])
     win_rate = wins / len(rows) * 100
-    rsi = order.get("rsi")
-    rsi_hot = rsi is not None and float(rsi) >= 68 and order["direction"] == "BUY"
-    rsi_cold = rsi is not None and float(rsi) <= 32 and order["direction"] == "SELL"
 
     if recent3_losses:
         last_closed_raw = rows[0]["closed_at"]
@@ -378,7 +495,11 @@ def adaptive_skip_reason(con: sqlite3.Connection, order: dict[str, Any]) -> str 
         if minutes_since < 90:
             return f"งดส่ง {order['direction']} ชั่วคราว: 3 order ล่าสุดแพ้ต่อเนื่อง รอ cooldown อีก {max(1, int(90-minutes_since))} นาที"
         if str(order.get("decision") or "") != "TRADE" or int(order.get("score") or 0) < 85:
-            return f"งดส่ง {order['direction']}: หลังแพ้ 3 ไม้ ต้องรอ TRADE confirmation และ score >=85 ตอนนี้ {int(order.get('score') or 0)}/100"
+            return (
+                f"งดส่ง {order['direction']}: หลังแพ้ Main Order จริง 3 ไม้ ต้องรอ decision=TRADE และ setup score >=85; "
+                f"ตอนนี้ decision={order.get('decision') or '-'} setup={int(order.get('score') or 0)}/100 "
+                f"engine={int(order.get('signal_score') or 0)}/100"
+            )
     recent_90_losses = 0
     for r in rows:
         try:
@@ -393,20 +514,37 @@ def adaptive_skip_reason(con: sqlite3.Connection, order: dict[str, Any]) -> str 
         return f"งดส่ง {order['direction']}: มี SL/CUT ฝั่งเดียวกัน {recent_90_losses} ไม้ใน 90 นาที ต้องรอ TRADE confirmation และ score >=85"
     if len(rows) >= 5 and losses >= 3 and win_rate < 45 and int(order.get("score") or 0) < 70:
         return f"งดส่ง {order['direction']} ชั่วคราว: ผลย้อนหลัง {wins}/{len(rows)} win ({win_rate:.1f}%) ต่ำกว่าเกณฑ์ และ score ยังไม่ถึง 70"
-    if rsi_hot:
-        return f"งดส่ง BUY: RSI {fmt(rsi)} สูงเกินไป เสี่ยงไล่ซื้อปลายรอบ"
-    if rsi_cold:
-        return f"งดส่ง SELL: RSI {fmt(rsi)} ต่ำเกินไป เสี่ยงขายปลายรอบ"
+    # Dynamic MTF structure gate replaces the old static RSI>=68 block.
+    # A strong bullish trend that keeps climbing past RSI 80 still allows BUY
+    # pullbacks when higher-timeframe structure supports it.
+    try:
+        struct = mtf_analyze(order.get("symbol", "XAUUSD"), "OANDA")
+        allowed, reason = mtf_allow_direction(struct, order["direction"])
+        if not allowed:
+            return reason
+    except Exception:
+        # If MTF fetch fails, fall back to allowing (do not silently block).
+        pass
     return None
 
 
 def ensure_outcome(con: sqlite3.Connection, order: dict[str, Any], fp: str) -> int:
     plan_key = f"entry_alert:{fp}"
+    metadata = {
+        "phase": "1B",
+        "rr": order.get("rr"),
+        "rsi": order.get("rsi"),
+        "ema20": order.get("ema20"),
+        "signal_score": order.get("signal_score"),
+        "raw_bias": order.get("raw_bias"),
+        "decision": order.get("decision"),
+    }
     con.execute(
         """
         INSERT OR IGNORE INTO trade_plan_outcomes
-        (source_signal_id, source, plan_key, symbol, timeframe, direction, entry_low, entry_high, sl, tp1, tp2, tp3, note, created_at)
-        VALUES (?, 'telegram_entry_alert', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (source_signal_id, source, plan_key, symbol, timeframe, direction, entry_low, entry_high, sl, tp1, tp2, tp3, note, created_at,
+         order_score, setup_score, setup_type, session_label, order_metadata_json)
+        VALUES (?, 'telegram_entry_alert', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             order["source_signal_id"],
@@ -422,6 +560,11 @@ def ensure_outcome(con: sqlite3.Connection, order: dict[str, Any], fp: str) -> i
             order["tp3"],
             f"Auto Telegram entry alert at price {fmt(order['price'])}",
             utc_now(),
+            order.get("score"),
+            order.get("score"),
+            order.get("setup_type"),
+            order.get("session_label"),
+            json.dumps(metadata, ensure_ascii=False, sort_keys=True),
         ),
     )
     row = con.execute("SELECT id FROM trade_plan_outcomes WHERE plan_key=?", (plan_key,)).fetchone()
@@ -461,6 +604,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--db-path", default=str(db_path_from_env()))
     p.add_argument("--symbol", default="XAUUSD")
     p.add_argument("--timeframe", default="15m")
+    p.add_argument("--max-age-seconds", type=int, default=420)
     p.add_argument("--target", default=os.getenv("TRAD_TELEGRAM_TARGET") or "telegram:8237892676")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--force", action="store_true")
@@ -470,9 +614,17 @@ def main(argv: list[str] | None = None) -> int:
         row = latest_signal(con, args.symbol, args.timeframe)
         if row is None or row["price"] is None:
             return 0
+        age = signal_age_seconds(row)
+        if age is None or age > args.max_age_seconds:
+            if args.dry_run:
+                age_text = "unknown" if age is None else f"{age:.0f}s"
+                print(f"งดส่ง Order: signal stale/invalid age={age_text} (max {args.max_age_seconds}s)")
+            return 0
         order, fp = derive_order(row)
         skip_reason = (
-            global_entry_floor_reason(order)
+            signal_quality_reason(row)
+            or global_entry_floor_reason(order)
+            or order_geometry_reason(order)
             or open_duplicate_reason(con, order)
             or recent_similar_zone_reason(con, order)
             or adaptive_skip_reason(con, order)

@@ -15,7 +15,12 @@ tracker_out="$(mktemp /tmp/trad_outcome_tracker.XXXXXX)"
 trap 'rm -f "$json_out" "$err_out" "$tracker_out"' EXIT
 
 # Collect first. Retryable upstream outages exit 0; keep previous DB state and stay silent.
-if ! /Users/waipop/.local/bin/uv run python scripts/collect_trad_signal.py --json >"$json_out" 2>"$err_out"; then
+# 2026-08-26: reverted to TradingView data source. MT5MarketDataBridge was never attached to a
+# live MT5 chart, so --data-source mt5 silently no-op'd (retryable MT5_SNAPSHOT_UNAVAILABLE) for
+# ~20 days with no new trade_signals rows and no alerts. Do not re-enable --data-source mt5 here
+# until the bridge attach + tick-freshness proof in mt5/MT5MarketDataBridge/README.md passes.
+if ! /Users/waipop/.local/bin/uv run python scripts/collect_trad_signal.py \
+  --json >"$json_out" 2>"$err_out"; then
   cat "$err_out" >&2
   exit 1
 fi
@@ -65,6 +70,16 @@ python /Users/waipop/.hermes/scripts/trad_entry_alert.py --target "$TRAD_TELEGRA
   cat "$err_out" >&2
   exit 1
 }
+
+# Lightweight scalp watch: alert WAIT_CONFIRMATION M5/M15 rejection setups without creating orders.
+# It stays silent unless a fresh rejection trigger appears and duplicate/cooldown guards pass.
+# Temporarily disabled per Waipop 2026-08-05 (paused sending scalp watches).
+if [ "${DISABLE_SCALP_WATCH:-0}" != "1" ]; then
+  python /Users/waipop/.hermes/scripts/trad_scalp_watch_alert.py --target "$TRAD_TELEGRAM_TARGET" >"$tracker_out" 2>"$err_out" || {
+    cat "$err_out" >&2
+    exit 1
+  }
+fi
 
 # Then notify Telegram only when ai_gate.should_ask_ai=true and no duplicate delivery exists.
 exec /Users/waipop/.local/bin/uv run python scripts/ai_alert_if_needed.py --target "$TRAD_TELEGRAM_TARGET"

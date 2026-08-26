@@ -99,7 +99,7 @@ def open_orders(con: sqlite3.Connection, symbol: str, timeframe: str):
     return con.execute(
         """
         SELECT * FROM trade_plan_outcomes
-        WHERE UPPER(symbol)=UPPER(?) AND timeframe=? AND status IN ('pending','entered')
+        WHERE UPPER(symbol)=UPPER(?) AND timeframe=? AND status='entered'
         ORDER BY id ASC
         """,
         (symbol, timeframe),
@@ -133,6 +133,7 @@ def evaluate_order(row: sqlite3.Row, latest: sqlite3.Row) -> dict[str, Any]:
     mae = float(row["max_adverse"] or 0)
     management_state = row["management_state"] if "management_state" in row.keys() else None
     partial_taken_at = row["partial_taken_at"] if "partial_taken_at" in row.keys() else None
+    source = str(row["source"] or "") if "source" in row.keys() else ""
     rsi_val = rsi.get("value")
     rsi_dir = str(rsi.get("direction") or "")
     macd_cross = str(macd.get("crossover") or "")
@@ -179,7 +180,19 @@ def evaluate_order(row: sqlite3.Row, latest: sqlite3.Row) -> dict[str, Any]:
         tp1_progress = max(0.0, min(1.5, mfe / tp1_distance))
         near_tp1 = (direction == "BUY" and price >= tp1f - 1.0) or (direction == "SELL" and price <= tp1f + 1.0)
 
-    if zone_broken and (not aligned or score < 40):
+    partial_opportunity = (mfe >= 5.0 or tp1_progress >= 0.65 or near_tp1)
+    # If a scalp watch had enough favorable excursion but the manager only sees
+    # it after price has snapped back through entry, do not label it as a full
+    # CUT. Classify as a protected/partial-breakeven management close so MGT
+    # learns that the setup produced tradable MFE but needed faster partial/BE.
+    if "scalp" in source.lower() and partial_taken_at is None and zone_broken and partial_opportunity and profit > -0.35 * risk:
+        action = "CUT_NOW"
+        suggested_sl = entry_ref
+        reason = (
+            "Scalp เคยมี MFE พอแบ่งกำไร/เลื่อน BE แล้ว แต่ราคากลับทะลุ trigger; "
+            "ปิดเป็น PARTIAL_BE/managed BE แทนการนับเป็น CUT เต็ม"
+        )
+    elif zone_broken and (not aligned or score < 40):
         action = "CUT_NOW"
         reason = (
             f"ราคาออกนอกโซนเข้าแล้ว ({'ต่ำกว่า' if direction == 'BUY' else 'สูงกว่า'} {fmt(cut_trigger)}) "
@@ -188,10 +201,13 @@ def evaluate_order(row: sqlite3.Row, latest: sqlite3.Row) -> dict[str, Any]:
     elif profit <= -0.5 * risk and not aligned:
         action = "CUT_NOW"
         reason = "ราคาเสียทางเกินครึ่งความเสี่ยง และ momentum ไม่หนุน ควรคัทก่อนถึง Hard SL"
-    elif partial_taken_at is None and (mfe >= 5.0 or tp1_progress >= 0.65 or near_tp1) and reversal:
+    elif partial_taken_at is None and partial_opportunity:
         action = "TAKE_PARTIAL"
         suggested_sl = entry_ref
-        reason = "MFE >= 5 หรือไปได้เกิน 65% ของ TP1 แล้วเริ่มย้อนกลับ แนะนำแบ่งปิดและเลื่อน SL หน้าทุน"
+        reason = (
+            "MFE >= 5 หรือไปได้เกิน 65% ของ TP1/ใกล้ TP1; "
+            "แบ่งปิดและเลื่อน SL หน้าทุนทันที ไม่รอ reversal ชัดเพื่อลดเคสกำไรกลายเป็น SL/CUT"
+        )
     elif partial_taken_at is None and profit >= 0.6 * risk and reversal:
         action = "TAKE_PARTIAL"
         suggested_sl = entry_ref
@@ -230,6 +246,8 @@ def evaluate_order(row: sqlite3.Row, latest: sqlite3.Row) -> dict[str, Any]:
         "ema20": ema20,
         "management_state": management_state,
         "partial_taken_at": partial_taken_at,
+        "source": source,
+        "partial_opportunity": partial_opportunity,
     }
 
 
@@ -292,14 +310,27 @@ def mark_sent(con: sqlite3.Connection, outcome_id: int, fp: str, target: str) ->
 def close_for_cut(con: sqlite3.Connection, e: dict[str, Any]) -> None:
     """Close an order in the tracker when the manager says CUT_NOW."""
     now = utc_now()
+    is_late_scalp_be = (
+        "scalp" in str(e.get("source") or "").lower()
+        and bool(e.get("partial_opportunity"))
+        and float(e.get("mfe") or 0) >= 5.0
+        and float(e.get("profit") or 0) > -0.35 * max(0.01, abs(float(e.get("hard_sl") or 0) - float(e.get("entry_low") or 0)))
+    )
+    result = "PARTIAL_BE" if is_late_scalp_be else "CUT"
+    management_state = "PARTIAL_TP" if is_late_scalp_be else None
+    partial_taken_at = now if is_late_scalp_be else None
+    partial_price = e.get("price") if is_late_scalp_be else None
+    partial_fraction = 0.5 if is_late_scalp_be else None
     con.execute(
         """
         UPDATE trade_plan_outcomes
-        SET status='closed', result='CUT', current_price=?, closed_at=COALESCE(closed_at, ?), last_checked_at=?,
-            exit_reason=?
+        SET status='closed', result=?, current_price=?, closed_at=COALESCE(closed_at, ?), last_checked_at=?,
+            exit_reason=?, management_state=COALESCE(?, management_state), managed_sl=COALESCE(?, managed_sl),
+            partial_taken_at=COALESCE(?, partial_taken_at), partial_price=COALESCE(?, partial_price),
+            partial_fraction=COALESCE(?, partial_fraction)
         WHERE id=? AND status IN ('pending','entered')
         """,
-        (e["price"], now, now, e["reason"], e["id"]),
+        (result, e["price"], now, now, e["reason"], management_state, e.get("suggested_sl"), partial_taken_at, partial_price, partial_fraction, e["id"]),
     )
 
 
