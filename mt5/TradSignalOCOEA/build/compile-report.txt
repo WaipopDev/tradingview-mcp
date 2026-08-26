@@ -1,0 +1,12 @@
+# TradSignalOCOEA_V0.02 Compile Report
+
+Compiler: MetaEditor 5 / X64 Regular
+Source: `TradSignalOCOEA_V0.02.mq5`
+Result: 0 errors, 0 warnings
+Artifact: `build/TradSignalOCOEA_V0.02.ex5`
+Source SHA-256: 532e93578630294c5ba94ffcfca89cd4475f02ae4bfe8b7b9309a799a17b1d7e
+Artifact SHA-256: 76be22beb67f15bcdcb84c8d0f8beaf7a065cfdcf757c58bacd74d6ee1cf838b
+
+Release identity: TradSignalOCOEA_V0.02
+MetaEditor property version: 1.002
+Change in this revision: versioned release migration after execution-mode revision; real accounts remain blocked.

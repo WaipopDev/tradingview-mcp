@@ -1,0 +1,16 @@
+; XAUUSD all-day BUY+SELL Shadow / tester baseline. Review broker symbol digits and spread.
+Magic=26081701
+SignalFile=trad_signal.csv
+FixedLots=0.01
+MinScore=70
+AllowedSession=ALL
+AsiaStartUtcHour=0
+AsiaEndUtcHour=9
+AllowedSide=BOTH
+MaxSpreadPoints=80
+MaxSlippagePoints=30
+MaxSignalAgeMinutes=15
+DailyLossLimit=100.0
+MaxEquityDrawdownPercent=2.0
+EnableProtectiveOppositeStop=false
+
