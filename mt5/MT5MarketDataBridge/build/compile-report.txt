@@ -1,0 +1,6 @@
+Compiled: 2026-08-06T12:32:11.902270+00:00
+Result: 0 errors, 0 warnings
+Source SHA-256: a07ac0f5dd8f8fa07b2e074ed01ebbcf747781343bbebea048ffac40d2f6953d
+EX5 SHA-256: 1bfd6bb1f34d4d277d7acb104feae6c011dcdde46934a6c5ca52243c50fff1fa
+EX5 bytes: 25482
+Target: MT5 custom indicator (read-only market data bridge)
