@@ -88,6 +88,32 @@ def test_analyze_and_store_signal_scores_and_persists_compact_signal(tmp_path):
     assert "mtf_alignment" in latest["score_breakdown"]
 
 
+def test_analyze_and_store_signal_marks_mt5_as_primary_source(tmp_path):
+    db_path = tmp_path / "signals.sqlite3"
+    initialize_database(db_path)
+    technical = _tech()
+    technical.update({
+        "source": "MT5",
+        "broker": "Demo-Server",
+        "auxiliary": {"source": "TradingView", "age_seconds": 120, "is_proxy": True},
+    })
+
+    result = analyze_and_store_signal(
+        symbol="XAUUSD",
+        exchange="MT5",
+        timeframe="15m",
+        db_path=db_path,
+        analyze_coin_fn=lambda symbol, exchange, timeframe: technical,
+        multi_timeframe_fn=lambda full_symbol, exchange: _mtf(),
+    )
+
+    assert result["primary_source"] == "MT5"
+    assert result["technical"]["primary_source"] == "MT5"
+    assert result["technical"]["auxiliary_source"] == "TradingView"
+    assert result["technical"]["auxiliary_age_seconds"] == 120
+    assert result["technical"]["auxiliary_is_proxy"] is True
+
+
 def test_analyze_and_store_signal_stores_error_free_wait_signal_when_score_is_not_trade(tmp_path):
     db_path = tmp_path / "signals.sqlite3"
     initialize_database(db_path)

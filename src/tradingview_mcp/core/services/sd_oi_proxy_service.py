@@ -18,6 +18,18 @@ OANDA_XAUUSD_OI_LIMITATION = (
 OANDA_XAUUSD_PROXY_SOURCE = "OANDA:XAUUSD intraday ATR + support/resistance OI proxy"
 
 
+def _proxy_provenance(technical: dict[str, Any]) -> tuple[str, str]:
+    if str(technical.get("source") or "").upper() == "MT5":
+        instrument = str(technical.get("symbol") or "MT5:GOLD")
+        broker = str(technical.get("broker") or "unknown broker")
+        return (
+            f"{instrument} broker-native ATR + support/resistance OI proxy",
+            f"{instrument} from {broker} is spot/CFD with no centralised open interest; "
+            "this is a broker-native ATR + support/resistance proxy, not real exchange OI.",
+        )
+    return OANDA_XAUUSD_PROXY_SOURCE, OANDA_XAUUSD_OI_LIMITATION
+
+
 def _num(value: Any, default: float | None = None) -> float | None:
     try:
         if value is None or value == "":
@@ -78,7 +90,11 @@ def _price_action_state(price: float, anchor: float, expected_move: float) -> st
     return "inside_sd1"
 
 
-def _safe_proxy_flow(flow: dict[str, Any] | None) -> dict[str, Any]:
+def _safe_proxy_flow(
+    flow: dict[str, Any] | None,
+    source: str = OANDA_XAUUSD_PROXY_SOURCE,
+    limitation: str = OANDA_XAUUSD_OI_LIMITATION,
+) -> dict[str, Any]:
     """Return flow_context safe to feed into Strategy Regime Scoring.
 
     Strategy scoring only consumes direction/confidence/source today, but the
@@ -92,24 +108,27 @@ def _safe_proxy_flow(flow: dict[str, Any] | None) -> dict[str, Any]:
     return {
         "direction": direction,
         "confidence": flow.get("confidence") or "Medium",
-        "source": OANDA_XAUUSD_PROXY_SOURCE,
+        "source": source,
         "real_open_interest_available": False,
-        "limitation": OANDA_XAUUSD_OI_LIMITATION,
+        "limitation": limitation,
     }
 
 
 def build_sd_oi_proxy(symbol: str, technical: dict[str, Any], timeframe: str = "15m") -> dict[str, Any]:
     """Build compact SD range and OI/intraday proxy payload from technical data."""
+    proxy_source, proxy_limitation = _proxy_provenance(technical)
     price = _price(technical)
     if price is None:
         return {
             "sd_range": {},
             "oi_proxy": {
                 "real_open_interest_available": False,
-                "source": OANDA_XAUUSD_PROXY_SOURCE,
-                "limitation": OANDA_XAUUSD_OI_LIMITATION + " Proxy unavailable without price.",
+                "source": proxy_source,
+                "limitation": proxy_limitation + " Proxy unavailable without price.",
             },
-            "flow_context": _safe_proxy_flow({"direction": "WAIT", "confidence": "Low"}),
+            "flow_context": _safe_proxy_flow(
+                {"direction": "WAIT", "confidence": "Low"}, proxy_source, proxy_limitation
+            ),
         }
 
     expected_move, move_source = _atr_expected_move(technical, price)
@@ -130,7 +149,7 @@ def build_sd_oi_proxy(symbol: str, technical: dict[str, Any], timeframe: str = "
         volume_state=str(volume.get("signal") or ""),
     )
     range_levels = scored.get("range_levels") or {}
-    flow = _safe_proxy_flow(scored.get("flow_context"))
+    flow = _safe_proxy_flow(scored.get("flow_context"), proxy_source, proxy_limitation)
 
     return {
         "sd_range": {
@@ -146,8 +165,8 @@ def build_sd_oi_proxy(symbol: str, technical: dict[str, Any], timeframe: str = "
         },
         "oi_proxy": {
             "real_open_interest_available": False,
-            "source": OANDA_XAUUSD_PROXY_SOURCE,
-            "limitation": OANDA_XAUUSD_OI_LIMITATION,
+            "source": proxy_source,
+            "limitation": proxy_limitation,
             "magnet_zone": _round(magnet),
             "support_levels": [_round(x) for x in levels.get("support", [])],
             "resistance_levels": [_round(x) for x in levels.get("resistance", [])],

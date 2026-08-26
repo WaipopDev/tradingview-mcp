@@ -2,6 +2,22 @@
 from __future__ import annotations
 
 SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS mt5_quote_samples (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  tick_time_ms INTEGER NOT NULL,
+  bucket_start_ms INTEGER NOT NULL,
+  bid REAL NOT NULL,
+  ask REAL NOT NULL,
+  spread_points REAL,
+  source TEXT NOT NULL DEFAULT 'MT5',
+  created_at TEXT NOT NULL,
+  UNIQUE(symbol, bucket_start_ms)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mt5_quote_samples_symbol_time
+ON mt5_quote_samples(symbol, tick_time_ms DESC);
+
 CREATE TABLE IF NOT EXISTS market_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   symbol TEXT NOT NULL,

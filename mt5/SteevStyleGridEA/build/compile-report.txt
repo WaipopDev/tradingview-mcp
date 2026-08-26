@@ -1,0 +1,24 @@
+SteevStyleGridEA MT5 compile report
+===================================
+
+Compiler: MetaEditor 5 / X64 Regular
+Source: C:\MT5GridCompiler\MQL5\Experts\SteevStyleGridEA\SteevStyleGridEA.mq5
+Compiled: 2026-08-06 12:43:42 +07
+Result: 0 errors, 0 warnings
+Elapsed: 1686 ms
+Artifact: build/SteevStyleGridEA.ex5
+Artifact size: 59064 bytes
+SHA-256: 7ed782d37c61675cbb16823db41bc585fe5aa29e2f8cf425ea1b7ed30057b849
+
+Review fixes included in this build:
+- Worst-case pending exposure is validated against hard open-position/open-lot/pending-lot caps before grid placement.
+- CTrade requests require accepted ResultRetcode values before being counted as successful.
+- Full-position closes reject partial-fill retcodes and verify that the ticket no longer exists.
+- A persisted risk lock retries pending cancellation and position liquidation on every tick/timer.
+- An active persisted risk lock survives broker-day rollover while owned exposure remains; reset is permitted only after positions and pendings are both zero.
+- OCO reconciliation/retry runs on every tick/timer and after restart.
+- Entry/exit transactions track short-lived trade cycles so ordinary exits trigger flat cleanup and cooldown even between polls.
+- On restart, owned Pending orders without an owned Position are removed as an orphan-safety reset.
+- Pending expiry starts cooldown and retries pending cleanup.
+
+The current source, compiled EA, and demo preset were installed into the local portable MetaTrader 5 data directory.

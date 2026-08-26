@@ -57,3 +57,39 @@ def test_collect_cli_prints_retryable_error_when_json_requested(capsys):
     assert rc == 0
     assert '"retryable": true' in captured.out
     assert captured.err == ""
+
+
+def test_collect_cli_selects_mt5_provider_without_tradingview(capsys, tmp_path):
+    module = _load_script_module()
+    snapshot = tmp_path / "GOLD.json"
+    calls = {}
+
+    def fake_analyze(**kwargs):
+        calls.update(kwargs)
+        return {"stored": True, "exchange": kwargs["exchange"]}
+
+    rc = module.main(
+        ["--data-source", "mt5", "--mt5-snapshot-path", str(snapshot), "--json"],
+        analyze_fn=fake_analyze,
+    )
+
+    assert rc == 0
+    assert calls["exchange"] == "MT5"
+    assert callable(calls["analyze_coin_fn"])
+    assert callable(calls["multi_timeframe_fn"])
+    assert '"exchange": "MT5"' in capsys.readouterr().out
+
+
+def test_collect_cli_mt5_snapshot_error_fails_closed_for_new_analysis(capsys, tmp_path):
+    module = _load_script_module()
+
+    def fake_analyze(**kwargs):
+        return kwargs["analyze_coin_fn"]("XAUUSD", "MT5", "15m")
+
+    rc = module.main(
+        ["--data-source", "mt5", "--mt5-snapshot-path", str(tmp_path / "missing.json"), "--json"],
+        analyze_fn=fake_analyze,
+    )
+
+    assert rc == 0
+    assert '"code": "MT5_SNAPSHOT_UNAVAILABLE"' in capsys.readouterr().out

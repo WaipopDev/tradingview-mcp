@@ -121,9 +121,12 @@ def _mtf_missing_timeframes(mtf: dict[str, Any]) -> list[str]:
 
 def _technical_payload(full_symbol: str, technical: dict[str, Any]) -> dict[str, Any]:
     """Return a stable, compact subset of technical analysis for AI prompts."""
-    return {
+    auxiliary = technical.get("auxiliary") or {}
+    payload = {
         "source_symbol": full_symbol,
         "reported_symbol": technical.get("symbol"),
+        "primary_source": technical.get("source") or ("MT5" if str(technical.get("exchange")).upper() == "MT5" else "TradingView"),
+        "timestamp": technical.get("timestamp"),
         "price_data": technical.get("price_data") or {},
         "timeframe_context": technical.get("timeframe_context") or {},
         "market_structure": technical.get("market_structure") or {},
@@ -133,6 +136,12 @@ def _technical_payload(full_symbol: str, technical: dict[str, Any]) -> dict[str,
         "atr": technical.get("atr") or {},
         "support_resistance": technical.get("support_resistance") or technical.get("levels") or {},
     }
+    if auxiliary:
+        payload["auxiliary_source"] = auxiliary.get("source")
+        payload["auxiliary_age_seconds"] = auxiliary.get("age_seconds")
+        payload["auxiliary_is_proxy"] = bool(auxiliary.get("is_proxy", False))
+        payload["auxiliary_stale"] = bool(auxiliary.get("stale", False))
+    return payload
 
 
 def _entry_zone(low: float, high: float) -> str:
@@ -188,12 +197,13 @@ def _compact_summary(
     ]
     if sd_oi_proxy:
         reason_codes.append("SD_OI_PROXY_ATTACHED")
-    return {
+    summary = {
         "symbol": symbol.upper(),
         "exchange": exchange.upper(),
         "instrument": full_symbol,
         "timeframe": timeframe,
         "price": current_price,
+        "primary_source": technical.get("source") or ("MT5" if exchange.upper() == "MT5" else "TradingView"),
         "bias": bias,
         "decision": score.get("decision") or "WAIT_CONFIRMATION",
         "score": score.get("total_score"),
@@ -209,6 +219,12 @@ def _compact_summary(
         "score_breakdown": score.get("score_breakdown") or {},
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    auxiliary = technical.get("auxiliary") or {}
+    if auxiliary:
+        summary["auxiliary_source"] = auxiliary.get("source")
+        summary["auxiliary_age_seconds"] = auxiliary.get("age_seconds")
+        summary["auxiliary_is_proxy"] = bool(auxiliary.get("is_proxy", False))
+    return summary
 
 
 def analyze_and_store_signal(
@@ -230,7 +246,8 @@ def analyze_and_store_signal(
     timeframe_clean = timeframe.strip() or "15m"
     if symbol_clean in XAUUSD_SYMBOLS:
         symbol_clean = "XAUUSD"
-        exchange_clean = "OANDA"
+        if exchange_clean != "MT5":
+            exchange_clean = "OANDA"
     full_symbol = f"{exchange_clean}:{symbol_clean}"
 
     # Pass the bare symbol into analyze_coin so provider aliases/fallbacks remain
@@ -288,6 +305,10 @@ def analyze_and_store_signal(
     latest["source"] = "analyze_and_store_signal"
     latest["instrument"] = summary["instrument"]
     latest["technical"] = summary["technical"]
+    latest["primary_source"] = summary["primary_source"]
+    for metadata_key in ("auxiliary_source", "auxiliary_age_seconds", "auxiliary_is_proxy"):
+        if metadata_key in summary:
+            latest[metadata_key] = summary[metadata_key]
     latest["score_breakdown"] = score.get("score_breakdown") or {}
     latest["ai_gate"] = summary["ai_gate"]
     return latest

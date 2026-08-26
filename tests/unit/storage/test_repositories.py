@@ -78,6 +78,31 @@ def test_trade_signal_repository_reads_latest_signal_as_compact_payload(tmp_path
     assert latest["data_age_seconds"] >= 0
 
 
+def test_trade_signal_repository_exposes_source_metadata_from_technical_payload(tmp_path):
+    db_path = tmp_path / "signals.sqlite3"
+    initialize_database(db_path)
+    repo = TradeSignalRepository(db_path)
+    repo.insert_trade_signal({
+        "symbol": "XAUUSD",
+        "exchange": "MT5",
+        "technical_json": json.dumps({
+            "primary_source": "MT5",
+            "auxiliary_source": "TradingView",
+            "auxiliary_age_seconds": 90,
+            "auxiliary_is_proxy": True,
+        }),
+        "bias": "WAIT",
+        "decision": "WAIT_CONFIRMATION",
+    })
+
+    latest = repo.get_latest_trade_signal("XAUUSD")
+
+    assert latest["primary_source"] == "MT5"
+    assert latest["auxiliary_source"] == "TradingView"
+    assert latest["auxiliary_age_seconds"] == 90
+    assert latest["auxiliary_is_proxy"] is True
+
+
 def test_trade_signal_repository_returns_none_when_no_signal(tmp_path):
     db_path = tmp_path / "signals.sqlite3"
     initialize_database(db_path)

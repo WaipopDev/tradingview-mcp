@@ -49,3 +49,15 @@ def test_build_sd_oi_proxy_missing_price_keeps_safe_proxy_limitation():
     assert result["flow_context"]["direction"] == "WAIT"
     assert result["flow_context"]["real_open_interest_available"] is False
     assert "not real exchange OI" in result["flow_context"]["limitation"]
+
+
+def test_build_sd_oi_proxy_preserves_mt5_broker_provenance():
+    technical = _technical()
+    technical.update({"source": "MT5", "broker": "Demo-Server", "symbol": "MT5:GOLD"})
+
+    result = build_sd_oi_proxy("XAUUSD", technical, "15m")
+
+    assert result["oi_proxy"]["source"] == "MT5:GOLD broker-native ATR + support/resistance OI proxy"
+    assert "MT5:GOLD" in result["oi_proxy"]["limitation"]
+    assert "Demo-Server" in result["oi_proxy"]["limitation"]
+    assert result["flow_context"]["source"] == result["oi_proxy"]["source"]

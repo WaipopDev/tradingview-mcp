@@ -88,6 +88,12 @@ def _compact_trade_signal(row: Mapping[str, Any]) -> dict[str, Any]:
         default = [] if api_key == "reason_codes" else {}
         result[api_key] = _parse_json(row.get(db_key), default)
 
+    technical = result.get("technical") or {}
+    result["primary_source"] = technical.get("primary_source") or ("MT5" if str(row.get("exchange") or "").upper() == "MT5" else "TradingView")
+    for metadata_key in ("auxiliary_source", "auxiliary_age_seconds", "auxiliary_is_proxy", "auxiliary_stale"):
+        if metadata_key in technical:
+            result[metadata_key] = technical[metadata_key]
+
     tps = [row.get("tp1"), row.get("tp2"), row.get("tp3")]
     result["plan"] = {
         "entry_zone": _format_entry_zone(row),
