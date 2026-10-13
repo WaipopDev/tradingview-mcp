@@ -676,6 +676,10 @@ def analyze_coin(
     )
     from tradingview_mcp.core.utils.validators import is_stock_exchange, normalize_tradingview_symbol, resolve_screener_for_symbol
 
+    if os.getenv("TRADINGVIEW_MCP_DATA_PROVIDER", "tradingview").lower() == "mt5":
+        from tradingview_mcp.core.services.metatrader5_service import analyze_symbol
+        return analyze_symbol(symbol, exchange, timeframe)
+
     if not _TA_AVAILABLE:
         return {"error": "tradingview_ta is missing; run `uv sync`."}
 

@@ -182,6 +182,21 @@ cd tradingview-mcp
 uv run tradingview-mcp
 ```
 
+### Local MetaTrader 5 provider (Windows)
+
+To use OHLCV bars from the MetaTrader 5 terminal installed on the same
+machine for single-symbol technical analysis, install the optional dependency
+and select the provider:
+
+```bash
+uv pip install -e ".[mt5]"
+TRADINGVIEW_MCP_DATA_PROVIDER=mt5 uv run tradingview-mcp streamable-http
+```
+
+The provider uses the local MT5 terminal, does not place orders, and maps
+common broker aliases such as `XAUUSD` to the locally available `GOLD` symbol.
+Set `MT5_TERMINAL_PATH` when MT5 is installed outside its default location.
+
 ---
 
 ## 🛠️ Troubleshooting

@@ -44,6 +44,9 @@ dependencies = [
 # Entry point now points to packaged module
 tradingview-mcp = "tradingview_mcp.server:main"
 
+[project.optional-dependencies]
+mt5 = ["MetaTrader5>=5.0.45"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

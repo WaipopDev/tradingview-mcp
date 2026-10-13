@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trad-auto-local"
+version = "0.1.0"
+description = "Local MT5 analysis and manual demo-only order execution with SQLite ledger"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = []
+
+[project.optional-dependencies]
+mt5 = ["MetaTrader5>=5.0.45; sys_platform == 'win32'"]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+trad-auto = "trad_auto.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
